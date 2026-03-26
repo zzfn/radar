@@ -44,7 +44,6 @@ impl GenericAnalyzer {
                         raw_path,
                         resolved: None, // 通用分析器不做路径解析
                         line: line_num,
-                        is_type_only: false,
                     });
                 }
             }
@@ -60,10 +59,6 @@ impl Default for GenericAnalyzer {
 }
 
 impl Analyzer for GenericAnalyzer {
-    fn language(&self) -> Language {
-        Language::Unknown
-    }
-
     fn can_handle(&self, _path: &Path) -> bool {
         // 作为兜底分析器，接受所有文本文件
         true

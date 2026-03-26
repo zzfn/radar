@@ -1,12 +1,54 @@
 /// 分析器模块：定义 Analyzer trait 和公共结构
 pub mod file_dep;
+pub mod fn_analyzer;
+pub mod fn_builder;
+pub mod go_lang;
+pub mod java;
 pub mod js_ts;
+pub mod python;
 pub mod rust_lang;
+pub mod vue;
 
 use std::path::{Path, PathBuf};
 
+use globset::{Glob, GlobSet, GlobSetBuilder};
+
 use crate::error::Result;
 use crate::graph::{DependencyGraph, Language, Node, NodeKind};
+
+/// 文件过滤选项（glob 模式）
+#[derive(Debug, Default, Clone)]
+pub struct FilterOpts {
+    /// 只分析匹配这些 glob 的文件（空 = 全部）
+    pub include: Vec<String>,
+    /// 排除匹配这些 glob 的文件
+    pub exclude: Vec<String>,
+}
+
+impl FilterOpts {
+    /// 编译 include/exclude 为 GlobSet（编译失败的模式跳过）
+    pub(crate) fn build_sets(&self) -> (Option<GlobSet>, Option<GlobSet>) {
+        let include_set = if self.include.is_empty() {
+            None
+        } else {
+            let mut b = GlobSetBuilder::new();
+            for pat in &self.include {
+                if let Ok(g) = Glob::new(pat) { b.add(g); }
+            }
+            b.build().ok()
+        };
+        let exclude_set = if self.exclude.is_empty() {
+            None
+        } else {
+            let mut b = GlobSetBuilder::new();
+            for pat in &self.exclude {
+                if let Ok(g) = Glob::new(pat) { b.add(g); }
+            }
+            b.build().ok()
+        };
+        (include_set, exclude_set)
+    }
+}
 
 /// 单个依赖条目（从文件中解析出的一条 import/use）
 #[derive(Debug, Clone)]
@@ -17,8 +59,6 @@ pub struct DepEntry {
     pub resolved: Option<PathBuf>,
     /// 导入发生的行号
     pub line: usize,
-    /// 是否是类型导入（TS 中的 `import type`）
-    pub is_type_only: bool,
 }
 
 /// 文件分析结果
@@ -34,9 +74,6 @@ pub struct FileAnalysis {
 
 /// 分析器 trait：所有语言分析器都实现此接口
 pub trait Analyzer: Send + Sync {
-    /// 返回该分析器支持的语言
-    fn language(&self) -> Language;
-
     /// 判断是否能处理该文件
     fn can_handle(&self, path: &Path) -> bool;
 
@@ -44,9 +81,11 @@ pub trait Analyzer: Send + Sync {
     fn analyze_file(&self, path: &Path) -> Result<FileAnalysis>;
 
     /// 批量分析目录下的所有文件
-    fn analyze_dir(&self, root: &Path, graph: &mut DependencyGraph) -> Result<()> {
+    fn analyze_dir(&self, root: &Path, graph: &mut DependencyGraph, opts: &FilterOpts) -> Result<()> {
         use ignore::WalkBuilder;
         use rayon::prelude::*;
+
+        let (include_set, exclude_set) = opts.build_sets();
 
         // 收集所有可处理的文件路径
         let files: Vec<PathBuf> = WalkBuilder::new(root)
@@ -57,6 +96,17 @@ pub trait Analyzer: Send + Sync {
             .filter(|e| e.file_type().map(|t| t.is_file()).unwrap_or(false))
             .map(|e| e.into_path())
             .filter(|p| self.can_handle(p))
+            .filter(|p| {
+                // 相对路径用于 glob 匹配
+                let rel = p.strip_prefix(root).unwrap_or(p);
+                if let Some(ref inc) = include_set {
+                    if !inc.is_match(rel) { return false; }
+                }
+                if let Some(ref exc) = exclude_set {
+                    if exc.is_match(rel) { return false; }
+                }
+                true
+            })
             .collect();
 
         // 并行分析所有文件
@@ -106,6 +156,10 @@ pub fn create_analyzer(lang: &Language) -> Box<dyn Analyzer> {
             Box::new(js_ts::JsTsAnalyzer::new())
         }
         Language::Rust => Box::new(rust_lang::RustAnalyzer::new()),
+        Language::Go => Box::new(go_lang::GoAnalyzer::new()),
+        Language::Python => Box::new(python::PythonAnalyzer::new()),
+        Language::Java => Box::new(java::JavaAnalyzer::new()),
+        Language::Vue => Box::new(vue::VueAnalyzer::new()),
         _ => Box::new(file_dep::GenericAnalyzer::new()),
     }
 }
@@ -124,7 +178,12 @@ pub fn detect_language(root: &Path) -> Language {
     // 找出数量最多的已知语言扩展名
     let dominant = ext_counts
         .iter()
-        .filter(|(ext, _)| matches!(ext.as_str(), "rs" | "ts" | "tsx" | "js" | "jsx" | "py"))
+        .filter(|(ext, _)| {
+            matches!(
+                ext.as_str(),
+                "rs" | "ts" | "tsx" | "js" | "jsx" | "py" | "go" | "java" | "vue"
+            )
+        })
         .max_by_key(|(_, &count)| count);
 
     match dominant.map(|(ext, _)| ext.as_str()) {
@@ -132,6 +191,9 @@ pub fn detect_language(root: &Path) -> Language {
         Some("ts") | Some("tsx") => Language::TypeScript,
         Some("js") | Some("jsx") => Language::JavaScript,
         Some("py") => Language::Python,
+        Some("go") => Language::Go,
+        Some("java") => Language::Java,
+        Some("vue") => Language::Vue,
         _ => Language::Unknown,
     }
 }

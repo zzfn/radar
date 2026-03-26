@@ -42,7 +42,6 @@ impl RustAnalyzer {
                 raw_path: cap[1].trim().to_string(),
                 resolved: None,
                 line: line_num,
-                is_type_only: false,
             });
         }
 
@@ -52,7 +51,6 @@ impl RustAnalyzer {
                 raw_path: format!("mod::{}", &cap[1]),
                 resolved: None,
                 line: line_num,
-                is_type_only: false,
             });
         }
 
@@ -62,7 +60,6 @@ impl RustAnalyzer {
                 raw_path: format!("extern::{}", &cap[1]),
                 resolved: None,
                 line: line_num,
-                is_type_only: false,
             });
         }
 
@@ -97,10 +94,6 @@ impl Default for RustAnalyzer {
 }
 
 impl Analyzer for RustAnalyzer {
-    fn language(&self) -> Language {
-        Language::Rust
-    }
-
     fn can_handle(&self, path: &Path) -> bool {
         path.extension().and_then(|e| e.to_str()) == Some("rs")
     }

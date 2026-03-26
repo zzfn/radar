@@ -3,6 +3,7 @@
 mod analyzer;
 mod cli;
 mod error;
+mod function_graph;
 mod graph;
 mod output;
 
@@ -15,7 +16,7 @@ use colored::Colorize;
 use indicatif::{ProgressBar, ProgressStyle};
 
 use crate::analyzer::{create_analyzer, detect_language};
-use crate::cli::{Cli, Commands, Lang, OutputFormat};
+use crate::cli::{Cli, Commands, FunctionsArgs, ImpactArgs, Lang, OutputFormat};
 use crate::error::Result;
 use crate::graph::DependencyGraph;
 use crate::output::{dot::DotOutput, json::JsonOutput, mermaid::MermaidOutput, OutputFormat as OutputFormatTrait, TreeOutput};
@@ -35,6 +36,8 @@ fn run(cli: Cli) -> Result<()> {
         Commands::Analyze(args) => cmd_analyze(args),
         Commands::Graph(args) => cmd_graph(args),
         Commands::Cycles(args) => cmd_cycles(args),
+        Commands::Impact(args) => cmd_impact(args),
+        Commands::Functions(args) => cmd_functions(args),
     }
 }
 
@@ -72,7 +75,11 @@ fn cmd_analyze(args: crate::cli::AnalyzeArgs) -> Result<()> {
         None
     };
 
-    analyzer.analyze_dir(&path, &mut graph)?;
+    let filter = crate::analyzer::FilterOpts {
+        include: args.include.clone(),
+        exclude: args.exclude.clone(),
+    };
+    analyzer.analyze_dir(&path, &mut graph, &filter)?;
 
     if let Some(pb) = pb {
         pb.finish_with_message(format!(
@@ -82,10 +89,26 @@ fn cmd_analyze(args: crate::cli::AnalyzeArgs) -> Result<()> {
         ));
     }
 
-    // 如果指定了 focus 文件，过滤图
-    if let Some(focus) = &args.focus {
-        println!("{} {}", "聚焦文件:".cyan(), focus.display());
-        // TODO: 实现聚焦过滤逻辑
+    // 如果指定了 focus 文件，过滤图为子图
+    let graph = if let Some(focus) = &args.focus {
+        let focus_abs = focus.canonicalize().unwrap_or(focus.clone());
+        println!("{} {}", "聚焦文件:".cyan(), focus_abs.display());
+        graph.subgraph(&focus_abs, args.depth)
+    } else {
+        graph
+    };
+
+    if args.summary {
+        let s = graph.summary();
+        println!("\n{}", "── 统计摘要 ──────────────────────────────".cyan());
+        println!("  节点数: {}  边数: {}  循环依赖: {}", s.node_count, s.edge_count, s.cycle_count);
+        if let Some((path, deg)) = &s.max_out_degree {
+            println!("  最高出度: {} (依赖 {} 个文件)", path.display().to_string().yellow(), deg);
+        }
+        if let Some((path, deg)) = &s.max_in_degree {
+            println!("  最高入度: {} (被 {} 个文件依赖)", path.display().to_string().yellow(), deg);
+        }
+        println!("  孤立节点: {}", s.isolated_count);
     }
 
     // 输出
@@ -106,7 +129,7 @@ fn cmd_graph(args: crate::cli::GraphArgs) -> Result<()> {
     let mut graph = DependencyGraph::new();
     let analyzer = create_analyzer(&lang);
 
-    analyzer.analyze_dir(&path, &mut graph)?;
+    analyzer.analyze_dir(&path, &mut graph, &crate::analyzer::FilterOpts::default())?;
 
     println!(
         "{} {} 个节点，{} 条边",
@@ -132,7 +155,7 @@ fn cmd_cycles(args: crate::cli::CyclesArgs) -> Result<()> {
     let mut graph = DependencyGraph::new();
     let analyzer = create_analyzer(&lang);
 
-    analyzer.analyze_dir(&path, &mut graph)?;
+    analyzer.analyze_dir(&path, &mut graph, &crate::analyzer::FilterOpts::default())?;
 
     let cycles = graph.detect_cycles();
 
@@ -164,6 +187,101 @@ fn cmd_cycles(args: crate::cli::CyclesArgs) -> Result<()> {
     Ok(())
 }
 
+// ─────────────────────────── impact 子命令 ───────────────────────────
+
+fn cmd_impact(args: ImpactArgs) -> Result<()> {
+    // 确定目标文件绝对路径
+    let target = args.target.canonicalize().unwrap_or(args.target.clone());
+
+    // 确定项目根目录：优先用 --root，否则用当前目录
+    let root = match args.root {
+        Some(r) => r.canonicalize().unwrap_or(r),
+        None => std::env::current_dir()?,
+    };
+
+    // 函数级分析
+    if let Some(ref fn_name) = args.function {
+        let fg = crate::analyzer::fn_builder::analyze_dir_functions(&root)?;
+        let report = fg.fn_impact(&target, fn_name, args.depth);
+        println!("{}", serde_json::to_string_pretty(&report)?);
+        return Ok(());
+    }
+
+    // 构建依赖图（原有文件级分析）
+    let lang = resolve_lang(&args.lang, &root);
+    let mut graph = DependencyGraph::new();
+    let analyzer = create_analyzer(&lang);
+    analyzer.analyze_dir(&root, &mut graph, &crate::analyzer::FilterOpts::default())?;
+
+    // 执行影响范围分析
+    let report = graph.impact(&target, args.depth);
+
+    if args.text {
+        // 人类可读的文本输出
+        if report.total_affected == 0 {
+            println!("{} 无文件依赖此目标，修改影响范围为零。", "✓".green().bold());
+        } else {
+            println!(
+                "{} 修改 {} 将影响 {} 个文件：",
+                "影响范围:".yellow().bold(),
+                target.display().to_string().cyan(),
+                report.total_affected
+            );
+            for node in &report.affected {
+                let indent = "  ".repeat(node.depth);
+                println!(
+                    "{}{}  (depth={})",
+                    indent,
+                    node.path.display().to_string().yellow(),
+                    node.depth
+                );
+            }
+            if report.has_cycles {
+                println!("{} 依赖链中存在循环依赖，影响范围可能不完整", "⚠".red());
+            }
+        }
+    } else {
+        // JSON 输出（AI 调用默认格式）
+        let json = serde_json::to_string_pretty(&report)?;
+        println!("{}", json);
+    }
+
+    Ok(())
+}
+
+// ─────────────────────────── functions 子命令 ───────────────────────────
+
+fn cmd_functions(args: FunctionsArgs) -> Result<()> {
+    let path = args.path.canonicalize().unwrap_or(args.path.clone());
+    let fg = crate::analyzer::fn_builder::analyze_dir_functions(&path)?;
+
+    let mut all_fns: Vec<serde_json::Value> = fg
+        .graph
+        .node_indices()
+        .map(|idx| {
+            let n = &fg.graph[idx];
+            serde_json::json!({
+                "name": n.name,
+                "file": n.file,
+                "start_line": n.start_line,
+                "end_line": n.end_line,
+                "language": format!("{:?}", n.language),
+            })
+        })
+        .collect();
+
+    // 按文件排序
+    all_fns.sort_by(|a, b| {
+        a["file"]
+            .as_str()
+            .unwrap_or("")
+            .cmp(b["file"].as_str().unwrap_or(""))
+    });
+
+    println!("{}", serde_json::to_string_pretty(&all_fns)?);
+    Ok(())
+}
+
 // ─────────────────────────── 工具函数 ───────────────────────────
 
 /// 将 CLI lang 参数转换为内部 Language 枚举
@@ -175,6 +293,9 @@ fn resolve_lang(cli_lang: &Lang, path: &Path) -> crate::graph::Language {
         Lang::Ts | Lang::JsTs => Language::TypeScript,
         Lang::Rust => Language::Rust,
         Lang::Python => Language::Python,
+        Lang::Go => Language::Go,
+        Lang::Java => Language::Java,
+        Lang::Vue => Language::Vue,
     }
 }
 
@@ -202,7 +323,7 @@ fn write_output(
         OutputFormat::Json => JsonOutput::new(true).write(graph, writer)?,
         OutputFormat::Dot => DotOutput::new().write(graph, writer)?,
         OutputFormat::Mermaid => MermaidOutput::new().write(graph, writer)?,
-        OutputFormat::Tree => TreeOutput::new(out_file.is_none()).write(graph, writer)?,
+        OutputFormat::Tree => TreeOutput::new().write(graph, writer)?,
     }
 
     Ok(())

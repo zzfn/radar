@@ -10,37 +10,20 @@ use crate::graph::DependencyGraph;
 
 /// 输出格式 trait：所有输出器实现此接口
 pub trait OutputFormat {
-    /// 格式名称（用于日志/调试）
-    fn name(&self) -> &'static str;
-
     /// 将依赖图写入 writer（可以是 File 或 stdout）
     fn write<W: Write + ?Sized>(&self, graph: &DependencyGraph, writer: &mut W) -> Result<()>;
-
-    /// 便捷方法：输出到字符串
-    fn to_string(&self, graph: &DependencyGraph) -> Result<String> {
-        let mut buf = Vec::new();
-        self.write(graph, &mut buf)?;
-        Ok(String::from_utf8_lossy(&buf).into_owned())
-    }
 }
 
 /// 树形格式（终端友好的文本输出）
-pub struct TreeOutput {
-    /// 是否显示颜色
-    pub colored: bool,
-}
+pub struct TreeOutput;
 
 impl TreeOutput {
-    pub fn new(colored: bool) -> Self {
-        Self { colored }
+    pub fn new() -> Self {
+        Self {}
     }
 }
 
 impl OutputFormat for TreeOutput {
-    fn name(&self) -> &'static str {
-        "tree"
-    }
-
     fn write<W: Write + ?Sized>(&self, graph: &DependencyGraph, writer: &mut W) -> Result<()> {
         use petgraph::Direction;
 

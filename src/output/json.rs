@@ -61,10 +61,6 @@ impl Default for JsonOutput {
 }
 
 impl OutputFormat for JsonOutput {
-    fn name(&self) -> &'static str {
-        "json"
-    }
-
     fn write<W: Write + ?Sized>(&self, graph: &DependencyGraph, writer: &mut W) -> Result<()> {
         // 构建节点列表
         let nodes: Vec<JsonNode> = graph
@@ -137,7 +133,9 @@ mod tests {
     fn test_empty_graph_json() {
         let graph = DependencyGraph::new();
         let output = JsonOutput::new(true);
-        let result = output.to_string(&graph).unwrap();
+        let mut buf = Vec::new();
+        output.write(&graph, &mut buf).unwrap();
+        let result = String::from_utf8(buf).unwrap();
         let parsed: serde_json::Value = serde_json::from_str(&result).unwrap();
         assert_eq!(parsed["meta"]["node_count"], 0);
         assert_eq!(parsed["meta"]["edge_count"], 0);

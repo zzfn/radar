@@ -26,6 +26,12 @@ pub enum Commands {
 
     /// 检测循环依赖
     Cycles(CyclesArgs),
+
+    /// 分析修改某文件后的影响范围（适合 AI 调用）
+    Impact(ImpactArgs),
+
+    /// 列出项目中所有函数定义（JSON 格式，供 AI 探查使用）
+    Functions(FunctionsArgs),
 }
 
 /// `analyze` 子命令参数
@@ -65,6 +71,10 @@ pub struct AnalyzeArgs {
     /// 是否显示进度条
     #[arg(long, default_value = "true")]
     pub progress: bool,
+
+    /// 输出统计摘要（节点数、入/出度、孤立节点等）
+    #[arg(long)]
+    pub summary: bool,
 }
 
 /// `graph` 子命令参数
@@ -101,6 +111,45 @@ pub struct CyclesArgs {
     pub json: bool,
 }
 
+/// `impact` 子命令参数
+#[derive(Parser, Debug)]
+pub struct ImpactArgs {
+    /// 被修改的目标文件路径
+    pub target: PathBuf,
+
+    /// 项目根目录（用于构建完整依赖图，默认为当前目录）
+    #[arg(long, short = 'r')]
+    pub root: Option<PathBuf>,
+
+    /// 最大影响深度（0 = 不限制）
+    #[arg(long, short = 'd', default_value = "0")]
+    pub depth: usize,
+
+    /// 指定语言（不指定则自动检测）
+    #[arg(long, short = 'l', value_enum, default_value = "auto")]
+    pub lang: Lang,
+
+    /// 以纯文本格式输出（默认 JSON）
+    #[arg(long)]
+    pub text: bool,
+
+    /// 指定函数名，执行函数级影响分析（需要 tree-sitter 支持的语言）
+    /// 示例：--function verify_token
+    #[arg(long, short = 'n')]
+    pub function: Option<String>,
+}
+
+/// `functions` 子命令参数
+#[derive(Parser, Debug)]
+pub struct FunctionsArgs {
+    /// 要分析的目录路径
+    pub path: PathBuf,
+
+    /// 指定语言过滤（不指定则全部支持的语言）
+    #[arg(long, short = 'l', value_enum, default_value = "auto")]
+    pub lang: Lang,
+}
+
 /// 支持的语言类型
 #[derive(ValueEnum, Debug, Clone, PartialEq, Eq)]
 pub enum Lang {
@@ -116,6 +165,12 @@ pub enum Lang {
     Rust,
     /// Python
     Python,
+    /// Go
+    Go,
+    /// Java
+    Java,
+    /// Vue（单文件组件）
+    Vue,
 }
 
 /// 输出格式

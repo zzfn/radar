@@ -9,21 +9,13 @@ use crate::output::OutputFormat;
 pub struct DotOutput {
     /// 图的标题
     pub title: String,
-    /// 是否使用集群（按语言分组）
-    pub cluster: bool,
 }
 
 impl DotOutput {
     pub fn new() -> Self {
         Self {
             title: "dependency_graph".to_string(),
-            cluster: false,
         }
-    }
-
-    pub fn with_title(mut self, title: impl Into<String>) -> Self {
-        self.title = title.into();
-        self
     }
 }
 
@@ -34,10 +26,6 @@ impl Default for DotOutput {
 }
 
 impl OutputFormat for DotOutput {
-    fn name(&self) -> &'static str {
-        "dot"
-    }
-
     fn write<W: Write + ?Sized>(&self, graph: &DependencyGraph, writer: &mut W) -> Result<()> {
         // DOT 文件头
         writeln!(writer, "digraph {} {{", sanitize_id(&self.title))?;
@@ -132,7 +120,9 @@ mod tests {
     fn test_empty_graph() {
         let graph = DependencyGraph::new();
         let output = DotOutput::new();
-        let result = output.to_string(&graph).unwrap();
+        let mut buf = Vec::new();
+        output.write(&graph, &mut buf).unwrap();
+        let result = String::from_utf8(buf).unwrap();
         assert!(result.contains("digraph"));
         assert!(result.contains('}'));
     }

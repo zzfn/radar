@@ -26,6 +26,9 @@ pub enum Language {
     TypeScript,
     Rust,
     Python,
+    Go,
+    Java,
+    Vue,
     /// 未知或未检测到的语言
     Unknown,
 }
@@ -38,6 +41,9 @@ impl Language {
             "ts" | "tsx" | "mts" | "cts" => Self::TypeScript,
             "rs" => Self::Rust,
             "py" | "pyw" => Self::Python,
+            "go" => Self::Go,
+            "java" => Self::Java,
+            "vue" => Self::Vue,
             _ => Self::Unknown,
         }
     }
@@ -120,11 +126,6 @@ impl DependencyGraph {
         }
     }
 
-    /// 根据路径查找节点索引
-    pub fn find_node(&self, path: &PathBuf) -> Option<NodeIndex> {
-        self.node_map.get(path).copied()
-    }
-
     /// 获取节点总数
     pub fn node_count(&self) -> usize {
         self.graph.node_count()
@@ -151,20 +152,153 @@ impl DependencyGraph {
             .collect()
     }
 
-    /// 获取指定节点的直接依赖（出边邻居）
-    pub fn direct_deps(&self, idx: NodeIndex) -> Vec<NodeIndex> {
+    /// 影响范围分析：从 target 出发，沿反向边（谁依赖了我）BFS，
+    /// 返回所有受影响的节点及其影响链。
+    /// max_depth = 0 表示不限深度。
+    pub fn impact(&self, target: &PathBuf, max_depth: usize) -> ImpactReport {
         use petgraph::Direction;
-        self.graph
-            .neighbors_directed(idx, Direction::Outgoing)
-            .collect()
+        use std::collections::{HashMap, VecDeque};
+
+        let has_cycles = !self.detect_cycles().is_empty();
+
+        let Some(&start) = self.node_map.get(target) else {
+            return ImpactReport {
+                target: target.clone(),
+                affected: vec![],
+                total_affected: 0,
+                has_cycles,
+            };
+        };
+
+        // BFS：(节点索引, 当前深度, 影响链)
+        let mut queue: VecDeque<(NodeIndex, usize, Vec<PathBuf>)> = VecDeque::new();
+        // visited 记录已访问节点，避免循环依赖时死循环
+        let mut visited: HashMap<NodeIndex, usize> = HashMap::new();
+        let mut affected: Vec<AffectedNode> = Vec::new();
+
+        queue.push_back((start, 0, vec![target.clone()]));
+        visited.insert(start, 0);
+
+        while let Some((idx, depth, via)) = queue.pop_front() {
+            // 跳过 start 本身，只收集它的依赖者
+            if idx != start {
+                affected.push(AffectedNode {
+                    path: self.graph[idx].path.clone(),
+                    depth,
+                    via: via[..via.len() - 1].to_vec(), // via 不含自身
+                });
+            }
+
+            // 达到最大深度则不再展开
+            if max_depth > 0 && depth >= max_depth {
+                continue;
+            }
+
+            // 遍历反向边（谁导入了 idx）
+            for neighbor in self.graph.neighbors_directed(idx, Direction::Incoming) {
+                if visited.contains_key(&neighbor) {
+                    continue;
+                }
+                visited.insert(neighbor, depth + 1);
+                let mut next_via = via.clone();
+                next_via.push(self.graph[neighbor].path.clone());
+                queue.push_back((neighbor, depth + 1, next_via));
+            }
+        }
+
+        // 按深度升序排序
+        affected.sort_by_key(|n| n.depth);
+        let total = affected.len();
+
+        ImpactReport {
+            target: target.clone(),
+            affected,
+            total_affected: total,
+            has_cycles,
+        }
     }
 
-    /// 获取依赖指定节点的节点（入边邻居，即"谁依赖了我"）
-    pub fn dependents(&self, idx: NodeIndex) -> Vec<NodeIndex> {
+    /// 生成依赖图的统计摘要
+    pub fn summary(&self) -> GraphSummary {
         use petgraph::Direction;
-        self.graph
-            .neighbors_directed(idx, Direction::Incoming)
-            .collect()
+
+        let cycle_count = self.detect_cycles().len();
+
+        let mut max_out: Option<(PathBuf, usize)> = None;
+        let mut max_in: Option<(PathBuf, usize)> = None;
+        let mut isolated_count = 0;
+
+        for idx in self.graph.node_indices() {
+            let out_deg = self.graph.neighbors_directed(idx, Direction::Outgoing).count();
+            let in_deg = self.graph.neighbors_directed(idx, Direction::Incoming).count();
+
+            if out_deg == 0 && in_deg == 0 {
+                isolated_count += 1;
+            }
+            if max_out.as_ref().map_or(true, |(_, d)| out_deg > *d) {
+                max_out = Some((self.graph[idx].path.clone(), out_deg));
+            }
+            if max_in.as_ref().map_or(true, |(_, d)| in_deg > *d) {
+                max_in = Some((self.graph[idx].path.clone(), in_deg));
+            }
+        }
+
+        GraphSummary {
+            node_count: self.node_count(),
+            edge_count: self.edge_count(),
+            cycle_count,
+            max_out_degree: max_out,
+            max_in_degree: max_in,
+            isolated_count,
+        }
+    }
+
+    /// 提取以 root 为起点的正向子图（出向 BFS，max_depth=0 表示不限深度）
+    /// 返回只包含可达节点和对应边的新 DependencyGraph
+    pub fn subgraph(&self, root: &PathBuf, max_depth: usize) -> DependencyGraph {
+        use petgraph::visit::EdgeRef;
+        use petgraph::Direction;
+        use std::collections::{HashMap, VecDeque};
+
+        let Some(&start) = self.node_map.get(root) else {
+            return DependencyGraph::new();
+        };
+
+        // BFS 收集可达节点
+        let mut visited: HashMap<NodeIndex, usize> = HashMap::new();
+        let mut queue: VecDeque<(NodeIndex, usize)> = VecDeque::new();
+        queue.push_back((start, 0));
+        visited.insert(start, 0);
+
+        while let Some((idx, depth)) = queue.pop_front() {
+            if max_depth > 0 && depth >= max_depth {
+                continue;
+            }
+            for neighbor in self.graph.neighbors_directed(idx, Direction::Outgoing) {
+                if !visited.contains_key(&neighbor) {
+                    visited.insert(neighbor, depth + 1);
+                    queue.push_back((neighbor, depth + 1));
+                }
+            }
+        }
+
+        // 构建子图
+        let mut sub = DependencyGraph::new();
+        for (&old_idx, _) in &visited {
+            sub.add_node(self.graph[old_idx].clone());
+        }
+        for (&old_idx, _) in &visited {
+            for edge_ref in self.graph.edges_directed(old_idx, Direction::Outgoing) {
+                if visited.contains_key(&edge_ref.target()) {
+                    let src_path = &self.graph[old_idx].path;
+                    let dst_path = &self.graph[edge_ref.target()].path;
+                    if let (Some(&si), Some(&di)) = (sub.node_map.get(src_path), sub.node_map.get(dst_path)) {
+                        sub.graph.add_edge(si, di, edge_ref.weight().clone());
+                    }
+                }
+            }
+        }
+        sub
     }
 }
 
@@ -174,17 +308,41 @@ impl Default for DependencyGraph {
     }
 }
 
-/// 分析结果摘要
+/// 依赖图统计摘要
 #[derive(Debug, Serialize)]
 pub struct GraphSummary {
-    /// 节点总数
     pub node_count: usize,
-    /// 边总数
     pub edge_count: usize,
-    /// 循环依赖数量
     pub cycle_count: usize,
-    /// 最大出度（依赖最多的节点）
-    pub max_out_degree: usize,
-    /// 最大入度（被依赖最多的节点）
-    pub max_in_degree: usize,
+    /// 出度最大的节点路径及其出度值
+    pub max_out_degree: Option<(PathBuf, usize)>,
+    /// 入度最大的节点路径及其入度值
+    pub max_in_degree: Option<(PathBuf, usize)>,
+    /// 孤立节点数（无任何边）
+    pub isolated_count: usize,
 }
+
+/// impact 分析中的单个受影响节点
+#[derive(Debug, Serialize)]
+pub struct AffectedNode {
+    /// 受影响的文件路径
+    pub path: PathBuf,
+    /// 距离目标的跳数（1 = 直接依赖者）
+    pub depth: usize,
+    /// 影响链：target → ... → 此文件的中间路径（含 target，不含自身）
+    pub via: Vec<PathBuf>,
+}
+
+/// impact 分析结果
+#[derive(Debug, Serialize)]
+pub struct ImpactReport {
+    /// 被修改的目标文件
+    pub target: PathBuf,
+    /// 所有受影响的文件（按深度升序）
+    pub affected: Vec<AffectedNode>,
+    /// 受影响文件总数
+    pub total_affected: usize,
+    /// 影响链中是否存在循环依赖
+    pub has_cycles: bool,
+}
+

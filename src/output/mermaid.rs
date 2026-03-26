@@ -17,15 +17,12 @@ pub struct MermaidOutput {
 pub enum MermaidDirection {
     /// 从左到右
     LeftRight,
-    /// 从上到下
-    TopDown,
 }
 
 impl MermaidDirection {
     fn as_str(&self) -> &'static str {
         match self {
             Self::LeftRight => "LR",
-            Self::TopDown => "TD",
         }
     }
 }
@@ -46,10 +43,6 @@ impl Default for MermaidOutput {
 }
 
 impl OutputFormat for MermaidOutput {
-    fn name(&self) -> &'static str {
-        "mermaid"
-    }
-
     fn write<W: Write + ?Sized>(&self, graph: &DependencyGraph, writer: &mut W) -> Result<()> {
         writeln!(writer, "```mermaid")?;
         writeln!(writer, "graph {}", self.direction.as_str())?;
@@ -153,7 +146,9 @@ mod tests {
     fn test_empty_graph_mermaid() {
         let graph = DependencyGraph::new();
         let output = MermaidOutput::new();
-        let result = output.to_string(&graph).unwrap();
+        let mut buf = Vec::new();
+        output.write(&graph, &mut buf).unwrap();
+        let result = String::from_utf8(buf).unwrap();
         assert!(result.contains("```mermaid"));
         assert!(result.contains("graph LR"));
         assert!(result.contains("```"));
