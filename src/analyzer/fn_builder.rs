@@ -90,7 +90,7 @@ pub fn analyze_dir_functions(root: &Path) -> Result<FunctionGraph> {
     use ignore::WalkBuilder;
     use rayon::prelude::*;
 
-    let supported_exts = ["rs", "ts", "tsx", "js", "jsx", "go", "py"];
+    let supported_exts = ["rs", "ts", "tsx", "js", "jsx", "go", "py", "vue"];
 
     let files: Vec<std::path::PathBuf> = WalkBuilder::new(root)
         .hidden(false)
