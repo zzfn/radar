@@ -1,185 +1,80 @@
-# radar — 代码依赖分析工具
+# radar
 
-## 用途
+**用途**：修改代码前评估影响范围，或探查项目函数结构。
 
-分析代码库的文件级和函数级依赖关系，用于：
-- 修改代码前评估影响范围（blast radius）
-- 探查项目结构和函数定义
-- 检测循环依赖
-
-支持语言：Rust · TypeScript · JavaScript · Vue · Go · Python · Java
+二进制：`./skills/radar/scripts/radar`
 
 ---
 
-## 调用方式
+## 触发时机
 
-二进制位于项目的 `scripts/radar`，直接调用：
+在以下场景**主动调用**，无需用户明确要求：
+- 用户准备修改某个文件或函数时
+- 用户询问"这个文件被谁依赖"、"改这里有什么影响"
+- 修改完成后，用户要求确认是否引入循环依赖
+
+---
+
+## 执行流程
+
+### 场景一：修改文件前
 
 ```bash
-./skills/radar/scripts/radar --version
-./skills/radar/scripts/radar impact <file> --root .
+./skills/radar/scripts/radar impact <绝对路径> --root <项目根目录>
 ```
 
----
+根据输出决策：
+- `total_affected == 0` → 低风险，直接修改
+- `total_affected < 5`  → 中风险，告知用户受影响文件列表后再修改
+- `total_affected >= 5` → 高风险，展示影响链，建议用户确认后再继续
+- `has_cycles: true`    → 提醒用户依赖链中已有循环，修改需额外谨慎
 
-## 核心命令
+### 场景二：修改函数前
 
-### 1. `impact` — 文件级影响范围（最常用）
-
-修改某个文件前，查询哪些文件会受影响：
+先用 `functions` 确认函数存在，再查影响：
 
 ```bash
-# 基本用法（JSON 输出，AI 友好）
-./skills/radar/scripts/radar impact <target-file> --root <project-root>
+# 1. 确认函数名
+./skills/radar/scripts/radar functions <目录> --lang <语言>
 
-# 限制影响链深度
-./skills/radar/scripts/radar impact src/auth/jwt.ts --root . --depth 3
-
-# 人类可读格式
-./skills/radar/scripts/radar impact src/auth/jwt.ts --root . --text
+# 2. 查询调用者
+./skills/radar/scripts/radar impact <文件绝对路径> --function <函数名> --root <项目根目录>
 ```
 
-**输出结构：**
-```json
-{
-  "target": "/abs/path/to/file",
-  "affected": [
-    { "path": "src/api/login.ts", "depth": 1, "via": ["src/auth/jwt.ts"] },
-    { "path": "src/app.ts",       "depth": 2, "via": ["src/auth/jwt.ts", "src/api/login.ts"] }
-  ],
-  "total_affected": 2,
-  "has_cycles": false
-}
-```
+根据输出决策：
+- `total_callers == 0` → 无调用者，修改安全
+- `total_callers > 0`  → 列出所有调用者，提示用户可能需要同步修改
 
-**使用时机：** 每次修改文件前调用，根据 `total_affected` 和 `depth` 判断改动风险。
+**精度边界**（告知用户）：
+- 同文件调用、跨文件唯一名函数 → 准确
+- 同名函数存在多个 → 保守跳过，实际影响可能更大
+- 动态派发/回调/反射 → 无法覆盖
 
----
-
-### 2. `impact --function` — 函数级影响范围
-
-修改某个具体函数前，查询所有调用它的函数：
+### 场景三：修改完成后检查循环依赖
 
 ```bash
-./skills/radar/scripts/radar impact src/auth.rs --function verify_token --root .
-./skills/radar/scripts/radar impact src/utils/helper.ts --function formatDate --root . --depth 5
+./skills/radar/scripts/radar cycles <项目根目录> --json
 ```
 
-**输出结构：**
-```json
-{
-  "target_file": "/abs/path/to/file",
-  "target_function": "verify_token",
-  "callers": [
-    { "function": "handle_request", "file": "src/handler.rs", "depth": 1, "via": [] },
-    { "function": "middleware",     "file": "src/mid.rs",     "depth": 2, "via": ["handle_request"] }
-  ],
-  "total_callers": 2
-}
-```
-
-**精度说明：**
-- 同文件调用 → 准确
-- 跨文件、函数名全局唯一 → 准确
-- 跨文件、同名函数多个 → 保守跳过（不猜测）
-- 动态派发/闭包/反射 → 不覆盖
+- 返回空数组 `[]` → 无循环依赖，安全
+- 返回非空 → 列出循环路径，建议用户处理后再提交
 
 ---
 
-### 3. `functions` — 列出所有函数定义
+## 常用参数
 
-在修改前探查项目结构，或确认函数名是否存在：
-
-```bash
-./skills/radar/scripts/radar functions <dir>
-./skills/radar/scripts/radar functions src/ --lang rust
-```
-
-**输出结构（JSON 数组）：**
-```json
-[
-  { "name": "verify_token", "file": "src/auth.rs", "start_line": 42, "end_line": 58, "language": "Rust" },
-  { "name": "handle_request", "file": "src/handler.rs", "start_line": 12, "end_line": 30, "language": "Rust" }
-]
-```
-
-**使用时机：** 不确定函数名是否存在，或需要了解函数分布时。
+| 参数 | 说明 |
+|------|------|
+| `--root <dir>` | 项目根目录（impact 必填） |
+| `--function <name>` | 函数级分析 |
+| `--depth <n>` | 最大追踪跳数，0=不限 |
+| `--lang <lang>` | 指定语言：`rust` `ts` `js` `go` `python` `java` `vue` |
+| `--text` | 人类可读输出（默认 JSON） |
 
 ---
 
-### 4. `analyze` — 完整依赖分析
+## 注意事项
 
-```bash
-# 快速查看目录依赖结构
-./skills/radar/scripts/radar analyze ./src
-
-# 输出统计摘要
-./skills/radar/scripts/radar analyze . --summary
-
-# 聚焦某文件的出向依赖（最多 3 跳）
-./skills/radar/scripts/radar analyze . --focus src/main.rs --depth 3
-
-# 排除测试文件
-./skills/radar/scripts/radar analyze . --exclude "**/*.test.ts" --exclude "**/__tests__/**"
-
-# 只分析 src 目录
-./skills/radar/scripts/radar analyze . --include "src/**"
-
-# 输出 JSON 供进一步处理
-./skills/radar/scripts/radar analyze . --output json
-```
-
----
-
-### 5. `cycles` — 循环依赖检测
-
-```bash
-./skills/radar/scripts/radar cycles .                  # 文本格式
-./skills/radar/scripts/radar cycles . --json           # JSON 格式
-```
-
----
-
-## 语言自动检测
-
-不指定 `--lang` 时，按文件数量投票推断主要语言。混合项目建议显式指定：
-
-```bash
---lang ts        # TypeScript（含 .tsx）
---lang js        # JavaScript
---lang rust      # Rust
---lang go        # Go
---lang python    # Python
---lang java      # Java
---lang vue       # Vue SFC
-```
-
----
-
-## AI 调用建议流程
-
-```
-1. 确认要修改的目标（文件 or 函数）
-2. 调用 radar impact 评估影响范围
-   - total_affected == 0 → 低风险，直接修改
-   - total_affected < 5  → 中风险，查看 affected 列表后修改
-   - total_affected >= 5 → 高风险，逐层分析再修改
-3. 修改完成后，再次调用 radar cycles 确认没有引入循环依赖
-```
-
----
-
-## 选项速查
-
-| 选项 | 适用命令 | 说明 |
-|------|---------|------|
-| `--root <dir>` | impact | 项目根目录（默认当前目录） |
-| `--function <name>` | impact | 函数级分析 |
-| `--depth <n>` | impact, analyze | 最大跳数（0=不限） |
-| `--lang <lang>` | 全部 | 指定语言 |
-| `--focus <file>` | analyze | 聚焦文件子图 |
-| `--include <glob>` | analyze | 只包含匹配文件 |
-| `--exclude <glob>` | analyze | 排除匹配文件 |
-| `--summary` | analyze | 输出统计摘要 |
-| `--text` | impact | 人类可读输出 |
-| `--output json\|dot\|mermaid\|tree` | analyze, graph | 输出格式 |
+- 路径使用**绝对路径**，避免相对路径歧义
+- `--root` 应为包含源码的项目根目录，不是文件所在目录
+- 语言检测失败时显式传 `--lang`
