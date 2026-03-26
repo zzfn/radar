@@ -300,6 +300,111 @@ impl DependencyGraph {
         }
         sub
     }
+
+    /// 未引用文件检测：返回 in-degree == 0 的文件列表
+    /// skip_entry: 跳过常见入口文件名（main.rs、index.ts 等）
+    pub fn unused_files(&self, skip_entry: bool) -> Vec<UnusedFile> {
+        use petgraph::Direction;
+
+        let mut result = Vec::new();
+        for idx in self.graph.node_indices() {
+            let in_deg = self
+                .graph
+                .neighbors_directed(idx, Direction::Incoming)
+                .count();
+            if in_deg > 0 {
+                continue;
+            }
+            let node = &self.graph[idx];
+            if skip_entry && is_likely_entry_point(&node.path) {
+                continue;
+            }
+            let out_deg = self
+                .graph
+                .neighbors_directed(idx, Direction::Outgoing)
+                .count();
+            result.push(UnusedFile {
+                path: node.path.clone(),
+                out_degree: out_deg,
+                language: node.language.clone(),
+            });
+        }
+        result.sort_by(|a, b| a.path.cmp(&b.path));
+        result
+    }
+
+    /// hotspot 分析：按 in-degree 降序返回最受依赖的文件列表
+    pub fn hotspots(&self, top_n: usize) -> Vec<HotspotFile> {
+        use petgraph::Direction;
+
+        let mut result: Vec<HotspotFile> = self
+            .graph
+            .node_indices()
+            .map(|idx| {
+                let node = &self.graph[idx];
+                let in_deg = self
+                    .graph
+                    .neighbors_directed(idx, Direction::Incoming)
+                    .count();
+                let out_deg = self
+                    .graph
+                    .neighbors_directed(idx, Direction::Outgoing)
+                    .count();
+                HotspotFile {
+                    path: node.path.clone(),
+                    in_degree: in_deg,
+                    out_degree: out_deg,
+                }
+            })
+            .collect();
+
+        result.sort_by(|a, b| b.in_degree.cmp(&a.in_degree).then(a.path.cmp(&b.path)));
+        if top_n > 0 {
+            result.truncate(top_n);
+        }
+        result
+    }
+
+    /// 路径查找：BFS 找从 from 到 to 的最短依赖路径
+    /// 返回 None 表示无路径
+    pub fn find_path(&self, from: &PathBuf, to: &PathBuf) -> Option<Vec<PathBuf>> {
+        use petgraph::Direction;
+        use std::collections::{HashMap, VecDeque};
+
+        let start = *self.node_map.get(from)?;
+        let end = *self.node_map.get(to)?;
+
+        // BFS，记录每个节点的前驱
+        let mut prev: HashMap<NodeIndex, NodeIndex> = HashMap::new();
+        let mut queue: VecDeque<NodeIndex> = VecDeque::new();
+        queue.push_back(start);
+        prev.insert(start, start);
+
+        while let Some(idx) = queue.pop_front() {
+            if idx == end {
+                // 回溯路径
+                let mut path = Vec::new();
+                let mut cur = end;
+                loop {
+                    path.push(self.graph[cur].path.clone());
+                    let p = prev[&cur];
+                    if p == cur {
+                        break;
+                    }
+                    cur = p;
+                }
+                path.reverse();
+                return Some(path);
+            }
+            for neighbor in self.graph.neighbors_directed(idx, Direction::Outgoing) {
+                if !prev.contains_key(&neighbor) {
+                    prev.insert(neighbor, idx);
+                    queue.push_back(neighbor);
+                }
+            }
+        }
+        None
+    }
 }
 
 impl Default for DependencyGraph {
@@ -344,5 +449,52 @@ pub struct ImpactReport {
     pub total_affected: usize,
     /// 影响链中是否存在循环依赖
     pub has_cycles: bool,
+}
+
+/// unused 分析中的单个未引用文件
+#[derive(Debug, Serialize)]
+pub struct UnusedFile {
+    pub path: PathBuf,
+    /// 该文件自身依赖的文件数（出度）
+    pub out_degree: usize,
+    pub language: Language,
+}
+
+/// hotspot 分析中的单个高被依赖文件
+#[derive(Debug, Serialize)]
+pub struct HotspotFile {
+    pub path: PathBuf,
+    /// 被多少文件依赖（入度）
+    pub in_degree: usize,
+    /// 自身依赖多少文件（出度）
+    pub out_degree: usize,
+}
+
+/// 判断文件路径是否为常见入口文件（不应算作"未引用"）
+fn is_likely_entry_point(path: &PathBuf) -> bool {
+    let name = path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("")
+        .to_lowercase();
+    matches!(
+        name.as_str(),
+        // Rust
+        "main.rs" | "lib.rs" | "build.rs"
+        // JS/TS
+        | "index.js" | "index.ts" | "index.jsx" | "index.tsx"
+        | "index.mjs" | "index.cjs"
+        | "main.js" | "main.ts" | "main.jsx" | "main.tsx"
+        | "app.js" | "app.ts" | "app.jsx" | "app.tsx"
+        | "vite.config.ts" | "vite.config.js"
+        | "next.config.js" | "next.config.ts"
+        // Python
+        | "__init__.py" | "__main__.py" | "setup.py" | "conftest.py"
+        | "manage.py" | "wsgi.py" | "asgi.py"
+        // Go
+        | "main.go"
+        // Java
+        | "main.java"
+    )
 }
 

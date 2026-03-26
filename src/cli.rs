@@ -32,6 +32,15 @@ pub enum Commands {
 
     /// 列出项目中所有函数定义（JSON 格式，供 AI 探查使用）
     Functions(FunctionsArgs),
+
+    /// 检测未被任何文件引用的死代码（文件级 + 函数级）
+    Unused(UnusedArgs),
+
+    /// 列出被最多文件依赖的高风险节点
+    Hotspot(HotspotArgs),
+
+    /// 查找两个文件之间的最短依赖路径
+    Path(PathArgs),
 }
 
 /// `analyze` 子命令参数
@@ -148,6 +157,14 @@ pub struct FunctionsArgs {
     /// 指定语言过滤（不指定则全部支持的语言）
     #[arg(long, short = 'l', value_enum, default_value = "auto")]
     pub lang: Lang,
+
+    /// 输出格式（json/dot/mermaid/tree）
+    #[arg(long, short = 'o', value_enum, default_value = "json")]
+    pub output: OutputFormat,
+
+    /// 输出到文件（不指定则输出到 stdout）
+    #[arg(long, short = 'f')]
+    pub out_file: Option<PathBuf>,
 }
 
 /// 支持的语言类型
@@ -171,6 +188,71 @@ pub enum Lang {
     Java,
     /// Vue（单文件组件）
     Vue,
+}
+
+/// `unused` 子命令参数
+#[derive(Parser, Debug)]
+pub struct UnusedArgs {
+    /// 要分析的目录路径
+    pub path: PathBuf,
+
+    /// 指定语言
+    #[arg(long, short = 'l', value_enum, default_value = "auto")]
+    pub lang: Lang,
+
+    /// 同时检测未被调用的函数（基于 tree-sitter）
+    #[arg(long)]
+    pub functions: bool,
+
+    /// 包含常见入口文件（main.rs、index.ts 等，默认跳过）
+    #[arg(long)]
+    pub include_entry: bool,
+
+    /// 输出格式
+    #[arg(long, short = 'o', value_enum, default_value = "tree")]
+    pub output: OutputFormat,
+}
+
+/// `hotspot` 子命令参数
+#[derive(Parser, Debug)]
+pub struct HotspotArgs {
+    /// 要分析的目录路径
+    pub path: PathBuf,
+
+    /// 指定语言
+    #[arg(long, short = 'l', value_enum, default_value = "auto")]
+    pub lang: Lang,
+
+    /// 显示前 N 个高风险节点（0 = 全部）
+    #[arg(long, short = 'n', default_value = "10")]
+    pub top: usize,
+
+    /// 输出格式
+    #[arg(long, short = 'o', value_enum, default_value = "tree")]
+    pub output: OutputFormat,
+}
+
+/// `path` 子命令参数
+#[derive(Parser, Debug)]
+pub struct PathArgs {
+    /// 要分析的目录路径
+    pub path: PathBuf,
+
+    /// 起始文件
+    #[arg(long)]
+    pub from: PathBuf,
+
+    /// 目标文件
+    #[arg(long)]
+    pub to: PathBuf,
+
+    /// 指定语言
+    #[arg(long, short = 'l', value_enum, default_value = "auto")]
+    pub lang: Lang,
+
+    /// 输出格式
+    #[arg(long, short = 'o', value_enum, default_value = "tree")]
+    pub output: OutputFormat,
 }
 
 /// 输出格式

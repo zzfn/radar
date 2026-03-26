@@ -16,7 +16,7 @@ use colored::Colorize;
 use indicatif::{ProgressBar, ProgressStyle};
 
 use crate::analyzer::{create_analyzer, detect_language};
-use crate::cli::{Cli, Commands, FunctionsArgs, ImpactArgs, Lang, OutputFormat};
+use crate::cli::{Cli, Commands, FunctionsArgs, HotspotArgs, ImpactArgs, Lang, OutputFormat, PathArgs, UnusedArgs};
 use crate::error::Result;
 use crate::graph::DependencyGraph;
 use crate::output::{dot::DotOutput, json::JsonOutput, mermaid::MermaidOutput, OutputFormat as OutputFormatTrait, TreeOutput};
@@ -38,6 +38,9 @@ fn run(cli: Cli) -> Result<()> {
         Commands::Cycles(args) => cmd_cycles(args),
         Commands::Impact(args) => cmd_impact(args),
         Commands::Functions(args) => cmd_functions(args),
+        Commands::Unused(args) => cmd_unused(args),
+        Commands::Hotspot(args) => cmd_hotspot(args),
+        Commands::Path(args) => cmd_path(args),
     }
 }
 
@@ -203,7 +206,34 @@ fn cmd_impact(args: ImpactArgs) -> Result<()> {
     if let Some(ref fn_name) = args.function {
         let fg = crate::analyzer::fn_builder::analyze_dir_functions(&root)?;
         let report = fg.fn_impact(&target, fn_name, args.depth);
-        println!("{}", serde_json::to_string_pretty(&report)?);
+        if args.text {
+            if report.total_callers == 0 {
+                println!("✓ 函数 `{}` 无调用者，修改安全。", fn_name);
+            } else {
+                println!(
+                    "函数 `{}` 有 {} 个调用者：",
+                    fn_name, report.total_callers
+                );
+                for caller in &report.callers {
+                    let indent = "  ".repeat(caller.depth);
+                    let via = if caller.via.is_empty() {
+                        String::new()
+                    } else {
+                        format!("  via {}", caller.via.join(" → "))
+                    };
+                    println!(
+                        "{}{}  {}  (depth={}){}",
+                        indent,
+                        caller.function,
+                        caller.file.display(),
+                        caller.depth,
+                        via
+                    );
+                }
+            }
+        } else {
+            println!("{}", serde_json::to_string_pretty(&report)?);
+        }
         return Ok(());
     }
 
@@ -255,30 +285,263 @@ fn cmd_functions(args: FunctionsArgs) -> Result<()> {
     let path = args.path.canonicalize().unwrap_or(args.path.clone());
     let fg = crate::analyzer::fn_builder::analyze_dir_functions(&path)?;
 
-    let mut all_fns: Vec<serde_json::Value> = fg
-        .graph
-        .node_indices()
-        .map(|idx| {
-            let n = &fg.graph[idx];
-            serde_json::json!({
-                "name": n.name,
-                "file": n.file,
-                "start_line": n.start_line,
-                "end_line": n.end_line,
-                "language": format!("{:?}", n.language),
+    let stdout = io::stdout();
+    let mut stdout_lock;
+    let mut file_writer;
+
+    let writer: &mut dyn Write = if let Some(ref out_path) = args.out_file {
+        file_writer = BufWriter::new(File::create(out_path)?);
+        println!("{} {}", "输出到:".cyan(), out_path.display());
+        &mut file_writer
+    } else {
+        stdout_lock = BufWriter::new(stdout.lock());
+        &mut stdout_lock
+    };
+
+    use crate::output::fn_graph;
+    match args.output {
+        OutputFormat::Json => fn_graph::write_json(&fg, writer)?,
+        OutputFormat::Dot => fn_graph::write_dot(&fg, writer)?,
+        OutputFormat::Mermaid => fn_graph::write_mermaid(&fg, writer)?,
+        OutputFormat::Tree => fn_graph::write_tree(&fg, writer)?,
+    }
+
+    Ok(())
+}
+
+// ─────────────────────────── unused 子命令 ───────────────────────────
+
+fn cmd_unused(args: UnusedArgs) -> Result<()> {
+    let path = args.path.canonicalize().unwrap_or(args.path.clone());
+
+    let lang = resolve_lang(&args.lang, &path);
+    let mut graph = DependencyGraph::new();
+    let analyzer = create_analyzer(&lang);
+    analyzer.analyze_dir(&path, &mut graph, &crate::analyzer::FilterOpts::default())?;
+
+    let unused_files = graph.unused_files(!args.include_entry);
+
+    // 函数级未调用检测
+    let unused_fns: Vec<serde_json::Value> = if args.functions {
+        let fg = crate::analyzer::fn_builder::analyze_dir_functions(&path)?;
+        use petgraph::Direction;
+        let skip_names: &[&str] = &[
+            "main", "new", "default", "init", "setup", "teardown", "drop",
+        ];
+        fg.graph
+            .node_indices()
+            .filter(|&idx| {
+                let in_deg = fg
+                    .graph
+                    .neighbors_directed(idx, Direction::Incoming)
+                    .count();
+                if in_deg > 0 {
+                    return false;
+                }
+                let name = fg.graph[idx].name.to_lowercase();
+                if skip_names.iter().any(|&s| name == s) {
+                    return false;
+                }
+                // 跳过测试函数
+                !name.starts_with("test") && !name.starts_with("bench")
             })
-        })
-        .collect();
+            .map(|idx| {
+                let n = &fg.graph[idx];
+                serde_json::json!({
+                    "name": n.name,
+                    "file": n.file,
+                    "start_line": n.start_line,
+                    "end_line": n.end_line,
+                    "language": format!("{:?}", n.language),
+                })
+            })
+            .collect()
+    } else {
+        vec![]
+    };
 
-    // 按文件排序
-    all_fns.sort_by(|a, b| {
-        a["file"]
-            .as_str()
-            .unwrap_or("")
-            .cmp(b["file"].as_str().unwrap_or(""))
-    });
+    match args.output {
+        OutputFormat::Json => {
+            let out = serde_json::json!({
+                "total_files": graph.node_count(),
+                "unused_files": unused_files,
+                "total_unused_files": unused_files.len(),
+                "unused_functions": unused_fns,
+                "total_unused_functions": unused_fns.len(),
+            });
+            println!("{}", serde_json::to_string_pretty(&out)?);
+        }
+        _ => {
+            // Tree / Dot / Mermaid 均以人类可读文本输出
+            println!(
+                "{} 扫描 {} 个文件，发现 {} 个未被引用的文件{}",
+                "unused:".yellow().bold(),
+                graph.node_count(),
+                unused_files.len(),
+                if args.include_entry { "" } else { "（已跳过入口文件）" }
+            );
+            println!("{}", "─".repeat(50));
+            if unused_files.is_empty() {
+                println!("{}", "✓ 无未引用文件".green());
+            } else {
+                for f in &unused_files {
+                    let lang_label = format!("{:?}", f.language);
+                    println!(
+                        "  {} {} {}",
+                        "○".yellow(),
+                        f.path.display().to_string().yellow(),
+                        format!("[{}, 出度={}]", lang_label, f.out_degree).dimmed()
+                    );
+                }
+            }
+            if args.functions {
+                println!();
+                println!(
+                    "{} 发现 {} 个未被调用的函数（已跳过 main/new/test* 等）",
+                    "unused fn:".yellow().bold(),
+                    unused_fns.len()
+                );
+                println!("{}", "─".repeat(50));
+                if unused_fns.is_empty() {
+                    println!("{}", "✓ 无未调用函数".green());
+                } else {
+                    for f in &unused_fns {
+                        println!(
+                            "  {} {}  {}:{}",
+                            "○".yellow(),
+                            f["name"].as_str().unwrap_or("?").yellow(),
+                            f["file"].as_str().unwrap_or("?"),
+                            f["start_line"]
+                        );
+                    }
+                }
+            }
+        }
+    }
 
-    println!("{}", serde_json::to_string_pretty(&all_fns)?);
+    Ok(())
+}
+
+// ─────────────────────────── hotspot 子命令 ───────────────────────────
+
+fn cmd_hotspot(args: HotspotArgs) -> Result<()> {
+    let path = args.path.canonicalize().unwrap_or(args.path.clone());
+
+    let lang = resolve_lang(&args.lang, &path);
+    let mut graph = DependencyGraph::new();
+    let analyzer = create_analyzer(&lang);
+    analyzer.analyze_dir(&path, &mut graph, &crate::analyzer::FilterOpts::default())?;
+
+    let hotspots = graph.hotspots(args.top);
+
+    match args.output {
+        OutputFormat::Json => {
+            println!("{}", serde_json::to_string_pretty(&hotspots)?);
+        }
+        _ => {
+            let label = if args.top > 0 {
+                format!("Top {} 高风险节点（按被依赖数排序）", args.top)
+            } else {
+                "所有节点（按被依赖数排序）".to_string()
+            };
+            println!("{} {}", "hotspot:".red().bold(), label);
+            println!("{}", "─".repeat(60));
+            println!("  {:>6}  {:>6}  {}", "入度", "出度", "文件");
+            println!("  {:>6}  {:>6}  {}", "------", "------", "────────────");
+            for h in &hotspots {
+                println!(
+                    "  {:>6}  {:>6}  {}",
+                    h.in_degree.to_string().red().bold(),
+                    h.out_degree,
+                    h.path.display().to_string().yellow()
+                );
+            }
+        }
+    }
+
+    Ok(())
+}
+
+// ─────────────────────────── path 子命令 ───────────────────────────
+
+fn cmd_path(args: PathArgs) -> Result<()> {
+    let root = args.path.canonicalize().unwrap_or(args.path.clone());
+    let from = args.from.canonicalize().unwrap_or(args.from.clone());
+    let to = args.to.canonicalize().unwrap_or(args.to.clone());
+
+    let lang = resolve_lang(&args.lang, &root);
+    let mut graph = DependencyGraph::new();
+    let analyzer = create_analyzer(&lang);
+    analyzer.analyze_dir(&root, &mut graph, &crate::analyzer::FilterOpts::default())?;
+
+    match graph.find_path(&from, &to) {
+        None => {
+            match args.output {
+                OutputFormat::Json => {
+                    println!(
+                        "{}",
+                        serde_json::to_string_pretty(&serde_json::json!({
+                            "found": false,
+                            "from": from,
+                            "to": to,
+                            "path": null,
+                            "hops": null,
+                        }))?
+                    );
+                }
+                _ => {
+                    println!(
+                        "{} {} → {} 之间无依赖路径",
+                        "✗".red().bold(),
+                        from.display().to_string().cyan(),
+                        to.display().to_string().cyan()
+                    );
+                }
+            }
+        }
+        Some(dep_path) => {
+            let hops = dep_path.len().saturating_sub(1);
+            match args.output {
+                OutputFormat::Json => {
+                    println!(
+                        "{}",
+                        serde_json::to_string_pretty(&serde_json::json!({
+                            "found": true,
+                            "from": from,
+                            "to": to,
+                            "path": dep_path,
+                            "hops": hops,
+                        }))?
+                    );
+                }
+                OutputFormat::Mermaid => {
+                    println!("graph LR");
+                    for i in 0..dep_path.len().saturating_sub(1) {
+                        let a = dep_path[i].file_name().and_then(|n| n.to_str()).unwrap_or("?");
+                        let b = dep_path[i + 1].file_name().and_then(|n| n.to_str()).unwrap_or("?");
+                        println!("    n{i}[\"{a}\"] --> n{}[\"{b}\"]", i + 1);
+                    }
+                }
+                _ => {
+                    println!(
+                        "{} 找到路径（{} 跳）",
+                        "✓".green().bold(),
+                        hops.to_string().yellow()
+                    );
+                    println!("{}", "─".repeat(50));
+                    for (i, p) in dep_path.iter().enumerate() {
+                        let connector = if i == 0 {
+                            "   ".to_string()
+                        } else {
+                            format!("{} → ", " ".repeat((i - 1) * 2))
+                        };
+                        println!("{}{}", connector, p.display().to_string().yellow());
+                    }
+                }
+            }
+        }
+    }
+
     Ok(())
 }
 

@@ -1,5 +1,6 @@
 /// 输出格式模块
 pub mod dot;
+pub mod fn_graph;
 pub mod json;
 pub mod mermaid;
 
