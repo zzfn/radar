@@ -1,3 +1,12 @@
+---
+name: radar
+description: 代码依赖分析工具。修改文件/函数前评估影响范围，探查函数结构，检测循环依赖。Use when modifying code files or functions to assess blast radius.
+license: MIT
+metadata:
+  author: nio-wad
+  version: "0.1.0"
+---
+
 # radar
 
 **用途**：修改代码前评估影响范围，或探查项目函数结构。
