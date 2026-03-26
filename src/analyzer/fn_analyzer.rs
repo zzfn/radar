@@ -138,7 +138,7 @@ fn parse_js_ts(path: &Path, source: &str, lang: &Language) -> Result<FileFunctio
         &ts_lang,
         r#"[
           (function_declaration name: (identifier) @fn_name) @fn_def
-          (method_definition key: (property_identifier) @fn_name) @fn_def
+          (method_definition name: (property_identifier) @fn_name) @fn_def
           (variable_declarator
             name: (identifier) @fn_name
             value: [(function_expression) (arrow_function)]) @fn_def
