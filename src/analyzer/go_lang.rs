@@ -200,22 +200,35 @@ impl Analyzer for GoAnalyzer {
             let source_idx = graph.add_node(source_node);
 
             for dep in analysis.deps {
-                if let Some(resolved) = dep.resolved {
-                    let target_node = crate::graph::Node {
-                        path: resolved,
-                        kind: crate::graph::NodeKind::File,
-                        language: Language::Go,
+                if let Some(resolved_dir) = dep.resolved {
+                    // Go import 解析到包目录，将目录展开为目录内所有 .go 文件，
+                    // 建立文件到文件的边，使 impact 分析能精确到单个文件。
+                    let go_files: Vec<PathBuf> = match std::fs::read_dir(&resolved_dir) {
+                        Ok(rd) => rd
+                            .filter_map(|e| e.ok())
+                            .map(|e| e.path())
+                            .filter(|p| p.extension().and_then(|x| x.to_str()) == Some("go"))
+                            .collect(),
+                        Err(_) => vec![resolved_dir], // 回退：目录读取失败时直接用目录路径
                     };
-                    let target_idx = graph.add_node(target_node);
-                    graph.add_edge(
-                        source_idx,
-                        target_idx,
-                        crate::graph::Edge {
-                            kind: crate::graph::EdgeKind::Import,
-                            line: Some(dep.line),
-                            raw_path: Some(dep.raw_path),
-                        },
-                    );
+
+                    for go_file in go_files {
+                        let target_node = crate::graph::Node {
+                            path: go_file,
+                            kind: crate::graph::NodeKind::File,
+                            language: Language::Go,
+                        };
+                        let target_idx = graph.add_node(target_node);
+                        graph.add_edge(
+                            source_idx,
+                            target_idx,
+                            crate::graph::Edge {
+                                kind: crate::graph::EdgeKind::Import,
+                                line: Some(dep.line),
+                                raw_path: Some(dep.raw_path.clone()),
+                            },
+                        );
+                    }
                 }
             }
         }
