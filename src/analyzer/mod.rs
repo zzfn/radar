@@ -126,21 +126,44 @@ pub trait Analyzer: Send + Sync {
 
             for dep in analysis.deps {
                 if let Some(resolved) = dep.resolved {
-                    let target_node = Node {
-                        path: resolved,
-                        kind: NodeKind::File,
-                        language: analysis.language.clone(),
-                    };
-                    let target_idx = graph.add_node(target_node);
-                    graph.add_edge(
-                        source_idx,
-                        target_idx,
-                        crate::graph::Edge {
-                            kind: crate::graph::EdgeKind::Import,
-                            line: Some(dep.line),
-                            raw_path: Some(dep.raw_path),
-                        },
-                    );
+                    // 若 resolved 是目录（包），展开为目录内同语言的源文件，
+                    // 建立文件到文件的精确边，使 impact 分析能定位到具体文件。
+                    let target_paths: Vec<PathBuf> =
+                        if resolved.is_dir() {
+                            let ext = analysis.language.primary_extension();
+                            match std::fs::read_dir(&resolved) {
+                                Ok(rd) => rd
+                                    .filter_map(|e| e.ok())
+                                    .map(|e| e.path())
+                                    .filter(|p| {
+                                        p.is_file() && ext.map_or(true, |x| {
+                                            p.extension().and_then(|e| e.to_str()) == Some(x)
+                                        })
+                                    })
+                                    .collect(),
+                                Err(_) => vec![resolved],
+                            }
+                        } else {
+                            vec![resolved]
+                        };
+
+                    for target_path in target_paths {
+                        let target_node = Node {
+                            path: target_path,
+                            kind: NodeKind::File,
+                            language: analysis.language.clone(),
+                        };
+                        let target_idx = graph.add_node(target_node);
+                        graph.add_edge(
+                            source_idx,
+                            target_idx,
+                            crate::graph::Edge {
+                                kind: crate::graph::EdgeKind::Import,
+                                line: Some(dep.line),
+                                raw_path: Some(dep.raw_path.clone()),
+                            },
+                        );
+                    }
                 }
             }
         }

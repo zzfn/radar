@@ -47,6 +47,20 @@ impl Language {
             _ => Self::Unknown,
         }
     }
+
+    /// 返回该语言源文件的主扩展名，用于目录展开时过滤文件
+    pub fn primary_extension(&self) -> Option<&'static str> {
+        match self {
+            Self::Python => Some("py"),
+            Self::Go => Some("go"),
+            Self::Rust => Some("rs"),
+            Self::Java => Some("java"),
+            Self::JavaScript => Some("js"),
+            Self::TypeScript => Some("ts"),
+            Self::Vue => Some("vue"),
+            Self::Unknown => None,
+        }
+    }
 }
 
 /// 图节点：表示一个可被依赖的单元
