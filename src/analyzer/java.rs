@@ -38,16 +38,13 @@ fn is_stdlib(pkg: &str) -> bool {
         || pkg.starts_with("org.xml.")
 }
 
-/// 将 Java 包名转换为文件系统路径，在 root 下查找对应文件或目录。
+/// 在给定的多个 source root 中查找 Java 包路径对应的文件/目录。
+/// 依次尝试每个 root，第一个命中即返回。
 ///
 /// - `com.example.Foo`  → `{root}/com/example/Foo.java`（文件）
 /// - `com.example.*`   → `{root}/com/example/`（目录）
 /// - `com.example.Foo.method`（static import）→ 先尝试 Foo.java，再尝试目录
-fn resolve_java_import(root: &Path, import_path: &str) -> Option<PathBuf> {
-    if is_stdlib(import_path) {
-        return None;
-    }
-
+fn resolve_java_import_in(root: &Path, import_path: &str) -> Option<PathBuf> {
     // 通配符 import：com.example.* → com/example/
     if import_path.ends_with(".*") {
         let pkg = &import_path[..import_path.len() - 2];
@@ -83,6 +80,67 @@ fn resolve_java_import(root: &Path, import_path: &str) -> Option<PathBuf> {
     None
 }
 
+/// 在多个 source root 中解析 Java import，跳过 stdlib，依次尝试每个 root。
+fn resolve_java_import(roots: &[PathBuf], import_path: &str) -> Option<PathBuf> {
+    if is_stdlib(import_path) {
+        return None;
+    }
+    roots.iter().find_map(|root| resolve_java_import_in(root, import_path))
+}
+
+/// 自动发现项目下所有 Maven/Gradle 风格的 Java source root（`src/main/java`）。
+/// 如果给定路径本身不是标准 source root，也将其作为候选加入。
+fn discover_java_roots(start: &Path) -> Vec<PathBuf> {
+    use std::collections::HashSet;
+    let mut roots: Vec<PathBuf> = Vec::new();
+    let mut seen: HashSet<PathBuf> = HashSet::new();
+
+    // 从 start 向上找到项目根（含 pom.xml / build.gradle 的最高祖先目录）
+    let project_root = {
+        let mut cur = start;
+        let mut found = start;
+        loop {
+            if cur.join("pom.xml").exists() || cur.join("build.gradle").exists() || cur.join("settings.gradle").exists() {
+                found = cur;
+            }
+            match cur.parent() {
+                Some(p) => cur = p,
+                None => break,
+            }
+        }
+        found
+    };
+
+    // 在项目根下递归搜索所有 src/main/java 目录（最多 6 层）
+    fn walk(dir: &Path, depth: u32, roots: &mut Vec<PathBuf>, seen: &mut HashSet<PathBuf>) {
+        if depth == 0 { return; }
+        let src_main_java = dir.join("src/main/java");
+        if src_main_java.is_dir() {
+            if seen.insert(src_main_java.clone()) {
+                roots.push(src_main_java);
+            }
+            return; // 找到了，不再向子目录递归
+        }
+        if let Ok(entries) = std::fs::read_dir(dir) {
+            for entry in entries.flatten() {
+                let p = entry.path();
+                if p.is_dir() {
+                    walk(&p, depth - 1, roots, seen);
+                }
+            }
+        }
+    }
+
+    walk(project_root, 6, &mut roots, &mut seen);
+
+    // 如果没找到任何 src/main/java，退回到 start 本身
+    if roots.is_empty() {
+        roots.push(start.to_path_buf());
+    }
+
+    roots
+}
+
 // ─────────────────────────── 解析逻辑 ───────────────────────────
 
 /// 解析单行 Java 源码，返回依赖条目（package 声明不作为依赖）
@@ -108,32 +166,30 @@ fn parse_line(line: &str, line_num: usize) -> Option<(String, usize)> {
 // ─────────────────────────── 分析器实现 ───────────────────────────
 
 pub struct JavaAnalyzer {
-    /// 项目根目录（用于解析包路径到文件路径）
-    root: PathBuf,
+    /// 所有可用的 Java source root（支持多模块项目）
+    roots: Vec<PathBuf>,
 }
 
 impl JavaAnalyzer {
     pub fn new() -> Self {
-        Self {
-            root: PathBuf::new(),
-        }
+        Self { roots: vec![] }
     }
 
-    /// 指定项目根目录
+    /// 指定起始目录，自动发现项目下所有 source root
     pub fn with_root(root: &Path) -> Self {
         Self {
-            root: root.to_path_buf(),
+            roots: discover_java_roots(root),
         }
     }
 
-    /// 解析 Java 源码内容，返回所有 import 条目（需传入 root 以解析路径）
-    pub fn parse_imports(content: &str, root: &Path) -> Vec<DepEntry> {
+    /// 解析 Java 源码内容，返回所有 import 条目
+    pub fn parse_imports(content: &str, roots: &[PathBuf]) -> Vec<DepEntry> {
         content
             .lines()
             .enumerate()
             .filter_map(|(i, line)| parse_line(line, i + 1))
             .map(|(raw_path, line)| {
-                let resolved = resolve_java_import(root, &raw_path);
+                let resolved = resolve_java_import(roots, &raw_path);
                 DepEntry { raw_path, resolved, line }
             })
             .collect()
@@ -153,7 +209,7 @@ impl Analyzer for JavaAnalyzer {
 
     fn analyze_file(&self, path: &Path) -> Result<FileAnalysis> {
         let content = std::fs::read_to_string(path)?;
-        let deps = Self::parse_imports(&content, &self.root);
+        let deps = Self::parse_imports(&content, &self.roots);
 
         Ok(FileAnalysis {
             path: path.to_path_buf(),
@@ -262,7 +318,7 @@ mod tests {
     use super::*;
 
     fn parse(content: &str) -> Vec<DepEntry> {
-        JavaAnalyzer::parse_imports(content, Path::new(""))
+        JavaAnalyzer::parse_imports(content, &[])
     }
 
     #[test]
@@ -333,13 +389,13 @@ public class Main {}
     #[test]
     fn test_resolve_wildcard_nonexistent() {
         // 不存在的目录应返回 None
-        let result = resolve_java_import(Path::new("/nonexistent"), "com.example.*");
+        let result = resolve_java_import(&[PathBuf::from("/nonexistent")], "com.example.*");
         assert!(result.is_none());
     }
 
     #[test]
     fn test_resolve_file_nonexistent() {
-        let result = resolve_java_import(Path::new("/nonexistent"), "com.example.Foo");
+        let result = resolve_java_import(&[PathBuf::from("/nonexistent")], "com.example.Foo");
         assert!(result.is_none());
     }
 }
