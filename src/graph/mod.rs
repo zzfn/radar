@@ -243,8 +243,14 @@ impl DependencyGraph {
         let mut isolated_count = 0;
 
         for idx in self.graph.node_indices() {
-            let out_deg = self.graph.neighbors_directed(idx, Direction::Outgoing).count();
-            let in_deg = self.graph.neighbors_directed(idx, Direction::Incoming).count();
+            let out_deg = self
+                .graph
+                .neighbors_directed(idx, Direction::Outgoing)
+                .count();
+            let in_deg = self
+                .graph
+                .neighbors_directed(idx, Direction::Incoming)
+                .count();
 
             if out_deg == 0 && in_deg == 0 {
                 isolated_count += 1;
@@ -306,7 +312,9 @@ impl DependencyGraph {
                 if visited.contains_key(&edge_ref.target()) {
                     let src_path = &self.graph[old_idx].path;
                     let dst_path = &self.graph[edge_ref.target()].path;
-                    if let (Some(&si), Some(&di)) = (sub.node_map.get(src_path), sub.node_map.get(dst_path)) {
+                    if let (Some(&si), Some(&di)) =
+                        (sub.node_map.get(src_path), sub.node_map.get(dst_path))
+                    {
                         sub.graph.add_edge(si, di, edge_ref.weight().clone());
                     }
                 }
@@ -511,4 +519,3 @@ fn is_likely_entry_point(path: &PathBuf) -> bool {
         | "main.java"
     )
 }
-
