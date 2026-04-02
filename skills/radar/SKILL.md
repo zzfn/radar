@@ -139,6 +139,34 @@ radar path <项目根目录> --from <文件A绝对路径> --to <文件B绝对路
 
 有路径 → 按路径逐跳解释耦合原因；无路径 → 两模块独立，可分别修改。
 
+### 场景六：生成依赖图并在浏览器打开
+
+将依赖图编码进 mermaid.live URL，直接在浏览器渲染，无需安装任何工具。
+
+```bash
+MERMAID=$(radar analyze <src目录> --output mermaid)
+
+URL=$(echo "$MERMAID" | python3 -c "
+import sys, zlib, base64, json, re
+raw = sys.stdin.read()
+m = re.search(r'\`\`\`mermaid\n(.*?)\`\`\`', raw, re.DOTALL)
+code = m.group(1).strip() if m else raw.strip()
+obj = json.dumps({'code': code, 'mermaid': {'theme': 'default'}})
+compressed = zlib.compress(obj.encode('utf-8'))
+encoded = base64.urlsafe_b64encode(compressed).decode()
+print(f'https://mermaid.live/edit#pako:{encoded}')
+")
+
+echo "依赖图：$URL"
+open "$URL"
+```
+
+执行步骤：
+1. 运行 `radar analyze <src目录> --output mermaid` 获取图内容
+2. Python 压缩编码成 mermaid.live URL
+3. `open "$URL"` 在浏览器打开
+4. 同时把 URL 输出给用户，方便分享
+
 ---
 
 ## 子命令速查
