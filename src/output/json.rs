@@ -46,31 +46,38 @@ struct JsonMeta {
 pub struct JsonOutput {
     /// 是否美化输出（缩进）
     pub pretty: bool,
+    /// 根目录，用于将绝对路径转换为相对路径
+    pub root: Option<std::path::PathBuf>,
 }
 
 impl JsonOutput {
-    pub fn new(pretty: bool) -> Self {
-        Self { pretty }
+    pub fn new(pretty: bool, root: Option<std::path::PathBuf>) -> Self {
+        Self { pretty, root }
     }
 }
 
 impl Default for JsonOutput {
     fn default() -> Self {
-        Self::new(true)
+        Self::new(true, None)
     }
 }
 
 impl OutputFormat for JsonOutput {
     fn write<W: Write + ?Sized>(&self, graph: &DependencyGraph, writer: &mut W) -> Result<()> {
-        // 构建节点列表
+        // 构建节点列表，路径优先使用相对路径
         let nodes: Vec<JsonNode> = graph
             .graph
             .node_indices()
             .map(|idx| {
                 let node = &graph.graph[idx];
+                let path = if let Some(root) = &self.root {
+                    node.path.strip_prefix(root).unwrap_or(&node.path).display().to_string()
+                } else {
+                    node.path.display().to_string()
+                };
                 JsonNode {
                     id: idx.index(),
-                    path: node.path.display().to_string(),
+                    path,
                     kind: format!("{:?}", node.kind),
                     language: format!("{:?}", node.language),
                 }
@@ -132,7 +139,7 @@ mod tests {
     #[test]
     fn test_empty_graph_json() {
         let graph = DependencyGraph::new();
-        let output = JsonOutput::new(true);
+        let output = JsonOutput::new(true, None);
         let mut buf = Vec::new();
         output.write(&graph, &mut buf).unwrap();
         let result = String::from_utf8(buf).unwrap();

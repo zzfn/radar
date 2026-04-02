@@ -115,7 +115,7 @@ fn cmd_analyze(args: crate::cli::AnalyzeArgs) -> Result<()> {
     }
 
     // 输出
-    write_output(&graph, &args.output, args.out_file.as_deref())?;
+    write_output(&graph, &args.output, args.out_file.as_deref(), Some(&path))?;
 
     Ok(())
 }
@@ -141,7 +141,7 @@ fn cmd_graph(args: crate::cli::GraphArgs) -> Result<()> {
         graph.edge_count()
     );
 
-    write_output(&graph, &args.output, args.out_file.as_deref())?;
+    write_output(&graph, &args.output, args.out_file.as_deref(), Some(&path))?;
 
     Ok(())
 }
@@ -291,7 +291,7 @@ fn cmd_functions(args: FunctionsArgs) -> Result<()> {
 
     let writer: &mut dyn Write = if let Some(ref out_path) = args.out_file {
         file_writer = BufWriter::new(File::create(out_path)?);
-        println!("{} {}", "输出到:".cyan(), out_path.display());
+        eprintln!("{} {}", "输出到:".cyan(), out_path.display());
         &mut file_writer
     } else {
         stdout_lock = BufWriter::new(stdout.lock());
@@ -567,6 +567,7 @@ fn write_output(
     graph: &DependencyGraph,
     format: &OutputFormat,
     out_file: Option<&Path>,
+    root: Option<&Path>,
 ) -> Result<()> {
     // 创建 writer
     let stdout = io::stdout();
@@ -583,7 +584,7 @@ fn write_output(
     };
 
     match format {
-        OutputFormat::Json => JsonOutput::new(true).write(graph, writer)?,
+        OutputFormat::Json => JsonOutput::new(true, root.map(|p| p.to_path_buf())).write(graph, writer)?,
         OutputFormat::Dot => DotOutput::new().write(graph, writer)?,
         OutputFormat::Mermaid => MermaidOutput::new().write(graph, writer)?,
         OutputFormat::Tree => TreeOutput::new().write(graph, writer)?,
