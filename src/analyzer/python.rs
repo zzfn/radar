@@ -64,8 +64,8 @@ fn resolve_relative_import(source_file: &Path, dots: &str, module: &str) -> Opti
         return Some(with_py);
     }
 
-    // 路径不存在时仍返回计算结果（测试时文件系统不存在，但逻辑正确）
-    Some(candidate)
+    // 路径不存在则返回 None，避免将幽灵路径插入依赖图
+    None
 }
 
 // ─────────────────────────── 解析逻辑 ───────────────────────────
@@ -244,13 +244,11 @@ mod tests {
 
     #[test]
     fn test_from_dotdot_base_import_base() {
-        // from ..base import Base —— 相对导入，上级目录的 base 模块
+        // from ..base import Base —— 相对导入，路径在测试文件系统中不存在，resolved 应为 None
         let entries = parse("from ..base import Base");
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].raw_path, "..base -> Base");
-        // resolved 应指向 /project/base 或 /project/base.py
-        let resolved = entries[0].resolved.as_ref().unwrap();
-        assert_eq!(resolved, Path::new("/project/base"));
+        assert!(entries[0].resolved.is_none());
     }
 
     #[test]
@@ -273,12 +271,10 @@ mod tests {
 
     #[test]
     fn test_relative_import_with_module() {
-        // from .utils import helper —— 当前包的 utils 模块
+        // from .utils import helper —— 路径在测试文件系统中不存在，resolved 应为 None
         let entries = parse("from .utils import helper");
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].raw_path, ".utils -> helper");
-        // resolved 指向 /project/src/utils
-        let resolved = entries[0].resolved.as_ref().unwrap();
-        assert_eq!(resolved, Path::new("/project/src/utils"));
+        assert!(entries[0].resolved.is_none());
     }
 }
