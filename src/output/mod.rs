@@ -54,33 +54,36 @@ impl OutputFormat for TreeOutput {
             return Ok(());
         }
 
+        let mut visited = std::collections::HashSet::new();
         for root in roots {
-            print_subtree(graph, root, writer, "", true)?;
+            print_subtree(graph, root, writer, "", true, &mut visited)?;
         }
 
         Ok(())
     }
 }
 
-/// 递归打印子树
+/// 递归打印子树，visited 用于检测循环依赖，防止无限递归
 fn print_subtree<W: Write + ?Sized>(
     graph: &DependencyGraph,
     idx: petgraph::graph::NodeIndex,
     writer: &mut W,
     prefix: &str,
     is_last: bool,
+    visited: &mut std::collections::HashSet<petgraph::graph::NodeIndex>,
 ) -> Result<()> {
     use petgraph::Direction;
 
     let node = &graph.graph[idx];
     let connector = if is_last { "└── " } else { "├── " };
-    writeln!(
-        writer,
-        "{}{}{}",
-        prefix,
-        connector,
-        node.path.display()
-    )?;
+
+    if visited.contains(&idx) {
+        writeln!(writer, "{}{}{}  (循环引用)", prefix, connector, node.path.display())?;
+        return Ok(());
+    }
+    visited.insert(idx);
+
+    writeln!(writer, "{}{}{}", prefix, connector, node.path.display())?;
 
     let children: Vec<_> = graph
         .graph
@@ -91,9 +94,10 @@ fn print_subtree<W: Write + ?Sized>(
 
     for (i, child) in children.iter().enumerate() {
         let is_last_child = i == children.len() - 1;
-        // 避免无限递归（循环依赖）：简单限制深度
-        print_subtree(graph, *child, writer, &new_prefix, is_last_child)?;
+        print_subtree(graph, *child, writer, &new_prefix, is_last_child, visited)?;
     }
+
+    visited.remove(&idx);
 
     Ok(())
 }
