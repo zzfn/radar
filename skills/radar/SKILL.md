@@ -7,7 +7,8 @@ description: >
   Use when: modifying files/functions, refactoring, reviewing PRs for dependency changes,
   finding dead code / unused code, understanding why two modules are coupled,
   assessing change risk before editing shared utilities.
-  主动触发：用户准备修改文件或函数时、询问依赖关系或改动风险时、开始大范围重构前。
+  主动触发：用户准备修改文件或函数时、询问依赖关系或改动风险时、开始大范围重构前、
+  询问某个函数被谁调用或调用了谁时、需要了解项目整体结构或模块关系时。
 license: MIT
 metadata:
   author: nio-wad
@@ -166,6 +167,29 @@ open "$URL"
 2. Python 压缩编码成 mermaid.live URL
 3. `open "$URL"` 在浏览器打开
 4. 同时把 URL 输出给用户，方便分享
+
+### 场景七：生成 JSON 依赖图供 AI 读取
+
+在开始分析或修改前，先生成结构化依赖图帮助理解项目模块关系。
+
+```bash
+radar analyze <src目录> --output json 2>/dev/null
+```
+
+输出为纯 JSON（诊断信息走 stderr），路径为相对路径，可直接读取：
+
+```json
+{
+  "meta": { "node_count": 20, "edge_count": 19 },
+  "nodes": [{ "id": 0, "path": "error.rs", "kind": "File", "language": "Rust" }],
+  "edges": [{ "from": 5, "to": 6, "kind": "Import", "line": 2 }]
+}
+```
+
+使用时机：
+- 用户让 AI 理解项目结构、模块划分时
+- 开始大范围重构前建立全局视图
+- 回答"这个模块负责什么"、"哪些模块相互依赖"等架构问题
 
 ---
 
