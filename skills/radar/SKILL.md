@@ -34,6 +34,9 @@ metadata:
   tree-sitter 时，impact 静默返回 `total_callers=0`，被误判为安全。
 - **NEVER 把 total_affected > 30 的结果直接展示给用户**：是底层公共模块，先用
   `--depth 2` 聚焦直接依赖层，否则信息过载反而无用。
+- **NEVER 对 Java Maven 项目用项目根目录作为 root**：Maven 源码根是
+  `src/main/java`，用项目根会导致包路径解析失败、edges 为空，被误判为不支持 Java。
+  正确用法：`--root <module>/src/main/java`，分析路径也传同一目录下的 `.java` 文件。
 
 ---
 
@@ -45,7 +48,8 @@ metadata:
 |---------|---------|------|
 | 工具函数/utils | 文件级 `impact` | 调用者广，函数图噪声更大 |
 | 业务逻辑函数 | 函数级 `impact --function` | 精确定位，避免过度告警 |
-| Java / Vue 文件 | 只用文件级 | tree-sitter 不支持这两种语言 |
+| Java 文件 | 文件级 `impact`，root 传 `src/main/java` | 支持依赖边；tree-sitter 不支持函数级 |
+| Vue 文件 | 只用文件级 | tree-sitter 不支持 Vue |
 | 删除或重命名 | 先 `unused`，再 `impact` | 确认无遗漏引用后再操作 |
 | 跨模块重构 | `hotspot` → `path` → `impact` | 先摸清架构，再逐一评估 |
 | hotspot 列表中的文件 | `impact` + `cycles` | 核心节点改动需同时检查是否新增循环 |
@@ -86,6 +90,7 @@ metadata:
 | 情况 | 原因 | 处理 |
 |------|------|------|
 | 结果为空（0 节点） | 语言检测失败 | 显式传 `--lang <lang>` |
+| Java edges 为空 | Maven 项目用了项目根而非包根 | root 改为 `<module>/src/main/java` |
 | 分析耗时极长 | 目录含 vendor/生成文件 | 改为分析 `src/` 子目录 |
 | binary 找不到 | skill 未编译 | `cargo build --release && cp target/release/radar skills/radar/scripts/` |
 
