@@ -8,7 +8,8 @@ description: >
   finding dead code / unused code, understanding why two modules are coupled,
   assessing change risk before editing shared utilities.
   主动触发：用户准备修改文件或函数时、询问依赖关系或改动风险时、开始大范围重构前、
-  询问某个函数被谁调用或调用了谁时、需要了解项目整体结构或模块关系时。
+  询问某个函数被谁调用或调用了谁时、需要了解项目整体结构或模块关系时、
+  需要可视化依赖图时。
 license: MIT
 metadata:
   author: nio-wad
