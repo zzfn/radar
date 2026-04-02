@@ -18,7 +18,7 @@ metadata:
 
 # radar
 
-二进制：`./skills/radar/scripts/radar`
+二进制：`./scripts/radar`
 
 ---
 
@@ -62,7 +62,7 @@ metadata:
 | 函数名在项目内重复 | 低 | 保守跳过，降级为文件级分析 |
 | 语言不受 tree-sitter 支持（Java/Vue） | 无 | 只用文件级 |
 
-先用 `radar functions <dir> --output json` 确认函数名唯一性，再决定是否信任函数级结果。
+先用 `./scripts/radar functions <dir> --output json` 确认函数名唯一性，再决定是否信任函数级结果。
 
 ---
 
@@ -71,7 +71,7 @@ metadata:
 ### 场景一：修改文件前
 
 ```bash
-radar impact <文件绝对路径> --root <项目根目录>
+./scripts/radar impact <文件绝对路径> --root <项目根目录>
 ```
 
 决策：
@@ -95,10 +95,10 @@ radar impact <文件绝对路径> --root <项目根目录>
 
 ```bash
 # 步骤一：确认函数名存在 + 检查唯一性
-radar functions <目录> --lang <语言>
+./scripts/radar functions <目录> --lang <语言>
 
 # 步骤二：查询调用者
-radar impact <文件绝对路径> --function <函数名> --root <项目根目录>
+./scripts/radar impact <文件绝对路径> --function <函数名> --root <项目根目录>
 ```
 
 决策：
@@ -115,7 +115,7 @@ radar impact <文件绝对路径> --function <函数名> --root <项目根目录
 ### 场景三：修改完成后检查循环
 
 ```bash
-radar cycles <项目根目录> --json
+./scripts/radar cycles <项目根目录> --json
 ```
 
 空数组 `[]` → 安全；非空 → 列出循环路径，建议处理后再提交。
@@ -123,8 +123,8 @@ radar cycles <项目根目录> --json
 ### 场景四：大范围重构前扫描
 
 ```bash
-radar hotspot <项目根目录> --top 10   # 高风险核心节点
-radar unused <项目根目录> --functions  # 死代码候选
+./scripts/radar hotspot <项目根目录> --top 10   # 高风险核心节点
+./scripts/radar unused <项目根目录> --functions  # 死代码候选
 ```
 
 解读：
@@ -136,7 +136,7 @@ radar unused <项目根目录> --functions  # 死代码候选
 ### 场景五：追踪依赖来源
 
 ```bash
-radar path <项目根目录> --from <文件A绝对路径> --to <文件B绝对路径>
+./scripts/radar path <项目根目录> --from <文件A绝对路径> --to <文件B绝对路径>
 ```
 
 有路径 → 按路径逐跳解释耦合原因；无路径 → 两模块独立，可分别修改。
@@ -146,7 +146,7 @@ radar path <项目根目录> --from <文件A绝对路径> --to <文件B绝对路
 将依赖图编码进 mermaid.live URL，直接在浏览器渲染，无需安装任何工具。
 
 ```bash
-MERMAID=$(radar analyze <src目录> --output mermaid)
+MERMAID=$(./scripts/radar analyze <src目录> --output mermaid)
 
 URL=$(echo "$MERMAID" | python3 -c "
 import sys, zlib, base64, json, re
@@ -164,7 +164,7 @@ open "$URL"
 ```
 
 执行步骤：
-1. 运行 `radar analyze <src目录> --output mermaid` 获取图内容
+1. 运行 `./scripts/radar analyze <src目录> --output mermaid` 获取图内容
 2. Python 压缩编码成 mermaid.live URL
 3. `open "$URL"` 在浏览器打开
 4. 同时把 URL 输出给用户，方便分享
@@ -174,7 +174,7 @@ open "$URL"
 在开始分析或修改前，先生成结构化依赖图帮助理解项目模块关系。
 
 ```bash
-radar analyze <src目录> --output json 2>/dev/null
+./scripts/radar analyze <src目录> --output json 2>/dev/null
 ```
 
 输出为纯 JSON（诊断信息走 stderr），路径为相对路径，可直接读取：
