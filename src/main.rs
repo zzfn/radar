@@ -50,7 +50,7 @@ fn cmd_analyze(args: crate::cli::AnalyzeArgs) -> Result<()> {
     let path = args.path.canonicalize()
         .unwrap_or(args.path.clone());
 
-    println!(
+    eprintln!(
         "{} {}",
         "分析目录:".cyan().bold(),
         path.display().to_string().yellow()
@@ -58,7 +58,7 @@ fn cmd_analyze(args: crate::cli::AnalyzeArgs) -> Result<()> {
 
     // 确定分析语言
     let lang = resolve_lang(&args.lang, &path);
-    println!("{} {:?}", "检测语言:".cyan(), lang);
+    eprintln!("{} {:?}", "检测语言:".cyan(), lang);
 
     // 构建图
     let mut graph = DependencyGraph::new();
@@ -95,7 +95,7 @@ fn cmd_analyze(args: crate::cli::AnalyzeArgs) -> Result<()> {
     // 如果指定了 focus 文件，过滤图为子图
     let graph = if let Some(focus) = &args.focus {
         let focus_abs = focus.canonicalize().unwrap_or(focus.clone());
-        println!("{} {}", "聚焦文件:".cyan(), focus_abs.display());
+        eprintln!("{} {}", "聚焦文件:".cyan(), focus_abs.display());
         graph.subgraph(&focus_abs, args.depth)
     } else {
         graph
