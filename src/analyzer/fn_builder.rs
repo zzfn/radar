@@ -109,7 +109,11 @@ pub fn analyze_dir_functions(root: &Path) -> Result<FunctionGraph> {
 
     let results: Vec<FileFunctions> = files
         .par_iter()
-        .filter_map(|p| analyze_file_functions(p).ok())
+        .filter_map(|p| {
+            analyze_file_functions(p).map_err(|e| {
+                eprintln!("警告: 跳过 {}: {}", p.display(), e);
+            }).ok()
+        })
         .collect();
 
     Ok(build_function_graph(results))
