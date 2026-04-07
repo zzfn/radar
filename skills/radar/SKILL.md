@@ -34,6 +34,8 @@ metadata:
   tree-sitter 时，impact 静默返回 `total_callers=0`，被误判为安全。
 - **NEVER 把 total_affected > 30 的结果直接展示给用户**：是底层公共模块，先用
   `--depth 2` 聚焦直接依赖层，否则信息过载反而无用。
+- **NEVER 把 radar 输出重定向到 /tmp 文件**：直接从 stdout 读取即可，禁止使用
+  `> /tmp/xxx.json` 或 `--out-file /tmp/...`。输出过大时改用 `--depth 2` 裁剪。
 - **Java Maven/Gradle 项目**：radar 会自动从传入目录向上找 `pom.xml` / `build.gradle`
   定位项目根，再扫描其下所有 `src/main/java` 作为解析候选，跨模块 import 自动覆盖。
   传任意目录（模块子目录或项目根）均可，无需手动指定每个模块的 source root。
