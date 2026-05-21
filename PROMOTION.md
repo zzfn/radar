@@ -102,9 +102,24 @@ Rust · TypeScript · JavaScript · Vue · Python · Go · Java
 
 ---
 
-## 快速使用
+## 使用方式
 
-`cargo install` 或直接使用预编译 binary。AI agent 可直接调用，也可手动跑：
+### 集成到 AI coding agent（推荐）
+
+将 radar 作为工具注册给 AI agent 后，AI 会**自动判断时机**——当你提到要修改某个文件或函数时，它主动跑 radar、读结果、再动手，整个过程你不需要输入任何命令。
+
+```
+你：把 validate_token 的超时从 30s 改成 60s
+
+AI：[自动运行 radar context，发现 3 个调用者]
+    validate_token 有 3 个调用者，修改前确认一下影响范围……
+```
+
+触发时机由工具描述定义，包括：修改文件/函数前、询问依赖关系时、开始重构前、需要可视化依赖图时。
+
+### 直接调用
+
+Radar 是标准 CLI，也可以手动跑：
 
 ```bash
 # 修改文件前
