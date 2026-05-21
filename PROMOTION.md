@@ -1,4 +1,4 @@
-# Radar —— 让 Claude 改代码之前先看清楚
+# Radar —— AI 改代码之前先看清楚
 
 ## 一句话
 
@@ -8,7 +8,7 @@
 
 ## 问题
 
-Claude 改代码很快，但它不知道你的 `utils.ts` 被 47 个地方引用，也不知道你的 `parseConfig` 函数有一条你完全没注意到的调用链。
+AI 改代码很快，但它不知道你的 `utils.ts` 被 47 个地方引用，也不知道你的 `parseConfig` 函数有一条你完全没注意到的调用链。
 
 改完才发现——测试挂了，同事的模块炸了，线上出了问题。
 
@@ -16,7 +16,7 @@ Claude 改代码很快，但它不知道你的 `utils.ts` 被 47 个地方引用
 
 ## Radar 做什么
 
-Radar 是一个 Claude Code skill。你准备让 AI 修改某个文件或函数之前，它先跑一条命令，告诉你：
+Radar 是一个本地 CLI 工具，任何 AI coding agent 都可以调用。你准备让 AI 修改某个文件或函数之前，它先跑一条命令，告诉你：
 
 - **这次改动会影响哪些文件**，每一层距离多远
 - **谁在调用这个函数**，调用链有多深
@@ -104,9 +104,7 @@ Rust · TypeScript · JavaScript · Vue · Python · Go · Java
 
 ## 快速使用
 
-项目已内置 skill，Claude Code 自动识别触发时机。你只需要在对话里告诉 Claude 要改哪里，它会主动跑 radar 评估风险再动手。
-
-手动调用：
+`cargo install` 或直接使用预编译 binary。AI agent 可直接调用，也可手动跑：
 
 ```bash
 # 修改文件前
