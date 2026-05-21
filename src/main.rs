@@ -16,7 +16,7 @@ use colored::Colorize;
 use indicatif::{ProgressBar, ProgressStyle};
 
 use crate::analyzer::{create_analyzer, detect_language};
-use crate::cli::{Cli, Commands, FunctionsArgs, HotspotArgs, ImpactArgs, Lang, OutputFormat, PathArgs, UnusedArgs};
+use crate::cli::{Cli, Commands, ContextArgs, ContextOutputFormat, FunctionsArgs, HotspotArgs, ImpactArgs, Lang, OutputFormat, PathArgs, UnusedArgs};
 use crate::error::Result;
 use crate::graph::DependencyGraph;
 use crate::output::{dot::DotOutput, json::JsonOutput, mermaid::MermaidOutput, OutputFormat as OutputFormatTrait, TreeOutput};
@@ -41,6 +41,7 @@ fn run(cli: Cli) -> Result<()> {
         Commands::Unused(args) => cmd_unused(args),
         Commands::Hotspot(args) => cmd_hotspot(args),
         Commands::Path(args) => cmd_path(args),
+        Commands::Context(args) => cmd_context(args),
     }
 }
 
@@ -537,6 +538,154 @@ fn cmd_path(args: PathArgs) -> Result<()> {
                         };
                         println!("{}{}", connector, p.display().to_string().yellow());
                     }
+                }
+            }
+        }
+    }
+
+    Ok(())
+}
+
+// ─────────────────────────── context 子命令 ───────────────────────────
+
+fn cmd_context(args: ContextArgs) -> Result<()> {
+    let target = args.target.canonicalize().unwrap_or(args.target.clone());
+    let root = match args.root {
+        Some(r) => r.canonicalize().unwrap_or(r),
+        None => std::env::current_dir()?,
+    };
+
+    // 构建文件级依赖图
+    let lang = resolve_lang(&args.lang, &root);
+    let mut graph = DependencyGraph::new();
+    let analyzer = create_analyzer(&lang);
+    analyzer.analyze_dir(&root, &mut graph, &crate::analyzer::FilterOpts::default())?;
+
+    // 检查 target 是否在图中，避免静默返回"安全"的误导结论
+    if graph.node_count() == 0 {
+        eprintln!(
+            "警告：未找到 {:?} 语言的源文件。请检查目录或用 --lang 指定语言。",
+            lang
+        );
+    } else if !graph.contains(&target) {
+        eprintln!(
+            "警告：目标文件未出现在依赖图中（已扫描 {} 个节点）。请检查路径是否正确，或用 --lang 指定语言。",
+            graph.node_count()
+        );
+    }
+
+    // 只做一次循环检测，只保留目标文件参与的循环
+    // 不使用 impact() 内部的全局 has_cycles，两者语义不同会造成输出矛盾
+    let target_cycles: Vec<Vec<std::path::PathBuf>> = graph
+        .detect_cycles()
+        .into_iter()
+        .filter(|cycle| cycle.iter().any(|p| p == &target))
+        .collect();
+
+    // 文件级影响分析（impact 内部也会调 detect_cycles 填 has_cycles，
+    // 但那是全局标志，我们只用 total_affected 和 affected 列表）
+    let file_impact = graph.impact(&target, args.depth);
+
+    // 函数级影响分析（可选）
+    let fn_impact = if let Some(ref fn_name) = args.function {
+        let fg = crate::analyzer::fn_builder::analyze_dir_functions(&root)?;
+        Some(fg.fn_impact(&target, fn_name, args.depth))
+    } else {
+        None
+    };
+
+    match args.output {
+        ContextOutputFormat::Json => {
+            let out = serde_json::json!({
+                "target": target,
+                "root": root,
+                "language": format!("{:?}", lang),
+                "file_impact": {
+                    "total_affected": file_impact.total_affected,
+                    // target_in_cycle 而非全局 has_cycles，语义更精确
+                    "target_in_cycle": !target_cycles.is_empty(),
+                    "affected": file_impact.affected.iter().map(|n| serde_json::json!({
+                        "path": n.path,
+                        "depth": n.depth,
+                        "via": n.via,
+                    })).collect::<Vec<_>>(),
+                },
+                "fn_impact": fn_impact.as_ref().map(|r| serde_json::json!({
+                    "function": r.target_function,
+                    "total_callers": r.total_callers,
+                    "callers": r.callers.iter().map(|c| serde_json::json!({
+                        "function": c.function,
+                        "file": c.file,
+                        "depth": c.depth,
+                        "via": c.via,
+                    })).collect::<Vec<_>>(),
+                })),
+                "cycles": target_cycles.iter().map(|cycle| {
+                    cycle.iter().map(|p| p.display().to_string()).collect::<Vec<_>>()
+                }).collect::<Vec<_>>(),
+            });
+            println!("{}", serde_json::to_string_pretty(&out)?);
+        }
+        ContextOutputFormat::Markdown => {
+            let display_target = target.strip_prefix(&root).unwrap_or(&target).display();
+
+            println!("## Context: {}", display_target);
+            println!();
+            println!("**Language:** {:?}", lang);
+
+            // 文件影响：⚠ 只在目标文件自身参与循环时才显示，与下方 Cycles 区块一致
+            if file_impact.total_affected == 0 {
+                println!("**File impact:** none (safe to modify)");
+            } else {
+                println!(
+                    "**File impact:** {} file(s) affected{}",
+                    file_impact.total_affected,
+                    if !target_cycles.is_empty() { " ⚠ (target is in a cycle)" } else { "" }
+                );
+            }
+            println!();
+
+            if !file_impact.affected.is_empty() {
+                println!("### Affected Files");
+                for node in &file_impact.affected {
+                    let p = node.path.strip_prefix(&root).unwrap_or(&node.path);
+                    println!("- `{}` (depth={})", p.display(), node.depth);
+                }
+                println!();
+            }
+
+            // 函数级调用者
+            if let Some(ref report) = fn_impact {
+                if report.total_callers == 0 {
+                    println!("### Function: `{}`", report.target_function);
+                    println!("No callers found (static analysis only — dynamic dispatch not covered).");
+                } else {
+                    println!("### Function: `{}`", report.target_function);
+                    println!("**Callers:** {}", report.total_callers);
+                    println!();
+                    for caller in &report.callers {
+                        let f = caller.file.strip_prefix(&root).unwrap_or(&caller.file);
+                        println!("- `{}` in `{}` (depth={})", caller.function, f.display(), caller.depth);
+                    }
+                }
+                println!();
+            }
+
+            // 循环依赖
+            if target_cycles.is_empty() {
+                println!("### Cycles");
+                println!("none");
+            } else {
+                println!("### Cycles ⚠");
+                for (i, cycle) in target_cycles.iter().enumerate() {
+                    let parts: Vec<String> = cycle
+                        .iter()
+                        .map(|p| {
+                            let rel = p.strip_prefix(&root).unwrap_or(p);
+                            rel.display().to_string()
+                        })
+                        .collect();
+                    println!("{}. {}", i + 1, parts.join(" → "));
                 }
             }
         }

@@ -13,7 +13,7 @@ description: >
 license: MIT
 metadata:
   author: nio-wad
-  version: "0.5.0"
+  version: "0.6.0"
 ---
 
 # radar
@@ -44,17 +44,16 @@ metadata:
 
 ## 修改前的决策框架
 
-运行 radar 之前，先判断修改的性质，选择正确的分析路径：
+**优先使用 `context`**：绝大多数修改前评估，一条命令即可完成（影响范围 + 可选函数调用者 + 循环检测）。只在需要特殊分析时才降级到单一子命令。
 
 | 修改类型 | 首选分析 | 原因 |
 |---------|---------|------|
-| 工具函数/utils | 文件级 `impact` | 调用者广，函数图噪声更大 |
-| 业务逻辑函数 | 函数级 `impact --function` | 精确定位，避免过度告警 |
-| Java 文件 | 文件级 `impact` | 支持依赖边（含跨模块）；tree-sitter 不支持函数级 |
-| Vue 文件 | 只用文件级 | tree-sitter 不支持 Vue |
-| 删除或重命名 | 先 `unused`，再 `impact` | 确认无遗漏引用后再操作 |
-| 跨模块重构 | `hotspot` → `path` → `impact` | 先摸清架构，再逐一评估 |
-| hotspot 列表中的文件 | `impact` + `cycles` | 核心节点改动需同时检查是否新增循环 |
+| 任意文件（通用） | `context <file>` | 一次拿到影响范围 + 循环，减少工具调用 |
+| 业务逻辑函数 | `context <file> --function <fn>` | 额外追加函数级调用者，精确定位 |
+| Java 文件 | `context <file>`（不加 --function） | tree-sitter 不支持 Java 函数级 |
+| Vue 文件 | `context <file>`（不加 --function） | tree-sitter 不支持 Vue 函数级 |
+| 删除或重命名 | 先 `unused`，再 `context` | 先确认引用状态，再评估影响 |
+| 跨模块重构 | `hotspot` → `path` → `context` | 先摸清架构，再逐一评估 |
 
 ---
 
@@ -74,18 +73,43 @@ metadata:
 
 ## 执行流程
 
-### 场景一：修改文件前
+### 场景零：修改前全量上下文（首选）
+
+绝大多数情况下，直接用 `context` 替代分别调用 `impact` + `cycles`：
 
 ```bash
-./scripts/radar impact <文件绝对路径> --root <项目根目录>
+# 只评估文件影响
+./scripts/radar context <文件绝对路径> --root <项目根目录>
+
+# 同时评估某个函数的调用者
+./scripts/radar context <文件绝对路径> --root <项目根目录> --function <函数名>
 ```
 
-决策：
-- `total_affected == 0` → 低风险，直接修改
-- `total_affected < 5`  → 中风险，告知受影响文件列表后修改
-- `total_affected >= 5` → 高风险，展示影响链，建议用户确认
-- `total_affected > 30` → 底层公共模块，改用 `--depth 2` 聚焦直接影响层
-- `has_cycles: true`    → 依赖链已有循环，修改可能扩大循环范围
+输出示例（markdown 格式，默认）：
+```
+## Context: src/auth/validator.rs
+**Language:** Rust
+**File impact:** 3 file(s) affected
+
+### Affected Files
+- `middleware/guard.rs` (depth=1)
+- `api/routes.rs` (depth=1)
+- `tests/integration.rs` (depth=2)
+
+### Function: `validate_token`
+**Callers:** 2
+- `check_auth` in `middleware/guard.rs` (depth=1)
+- `handle_login` in `api/routes.rs` (depth=2)
+
+### Cycles
+none
+```
+
+决策（同 impact）：
+- `File impact: none` → 低风险，直接修改
+- `1-4 files affected` → 中风险，告知受影响文件后修改
+- `5+ files affected` → 高风险，展示影响链，建议用户确认
+- `Cycles ⚠` → 依赖链已有循环，修改可能扩大循环范围
 
 **异常处理：**
 
@@ -95,15 +119,23 @@ metadata:
 | 分析耗时极长 | 目录含 vendor/生成文件 | 改为分析 `src/` 子目录 |
 | binary 找不到 | skill 未编译 | `cargo build --release && cp target/release/radar skills/radar/scripts/` |
 
-### 场景二：修改函数前
+### 场景一：修改文件前（降级方案）
 
-**必须两步走**，不可跳过步骤一：
+仅在需要 JSON 格式或与其他工具集成时才用 `impact` 替代 `context`：
+
+```bash
+./scripts/radar impact <文件绝对路径> --root <项目根目录>
+```
+
+### 场景二：修改函数前（降级方案）
+
+仅在需要确认函数名唯一性时才单独用 `functions` + `impact`：
 
 ```bash
 # 步骤一：确认函数名存在 + 检查唯一性
 ./scripts/radar functions <目录> --lang <语言>
 
-# 步骤二：查询调用者
+# 步骤二（已被 context --function 覆盖，通常不需要单独跑）
 ./scripts/radar impact <文件绝对路径> --function <函数名> --root <项目根目录>
 ```
 
@@ -204,7 +236,8 @@ open "$URL"
 
 | 子命令 | 典型用法 | 输出 |
 |--------|---------|------|
-| `impact` | 修改前评估影响 | JSON / `--text` |
+| `context` | **修改前全量上下文（首选）** | markdown / json |
+| `impact` | 修改前评估影响（降级方案） | JSON / `--text` |
 | `functions` | 探查函数定义 | JSON / `dot` / `mermaid` / `tree` |
 | `cycles` | 检测循环依赖 | 文本 / `--json` |
 | `unused` | 死代码检测 | tree / `--output json` |
@@ -216,12 +249,12 @@ open "$URL"
 
 | 参数 | 适用 | 说明 |
 |------|------|------|
-| `--root <dir>` | `impact` | 项目根目录（默认当前目录） |
-| `--function <name>` | `impact` | 函数级分析 |
-| `--depth <n>` | `impact` `analyze` | 最大追踪跳数，0=不限 |
+| `--root <dir>` | `context` `impact` | 项目根目录（默认当前目录） |
+| `--function <name>` | `context` `impact` | 函数级分析 |
+| `--depth <n>` | `context` `impact` `analyze` | 最大追踪跳数，默认 context=5，其余 0=不限 |
 | `--lang <lang>` | 所有 | `rust` `ts` `js` `go` `python` `java` `vue` |
+| `--output <fmt>` | `context` | `markdown`（默认）/ `json` |
 | `--text` | `impact` | 人类可读输出 |
-| `--output <fmt>` | 多数 | `json` / `dot` / `mermaid` / `tree` |
 | `--functions` | `unused` | 同时检测未调用函数 |
 | `--top <n>` | `hotspot` | 前 N 个节点（默认 10） |
 | `--from / --to` | `path` | 起止文件（绝对路径） |

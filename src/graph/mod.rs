@@ -140,6 +140,11 @@ impl DependencyGraph {
         }
     }
 
+    /// 检查路径对应的节点是否存在于图中
+    pub fn contains(&self, path: &PathBuf) -> bool {
+        self.node_map.contains_key(path)
+    }
+
     /// 获取节点总数
     pub fn node_count(&self) -> usize {
         self.graph.node_count()

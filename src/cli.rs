@@ -2,6 +2,15 @@
 use clap::{Parser, Subcommand, ValueEnum};
 use std::path::PathBuf;
 
+/// context 子命令的输出格式（只支持 json 和 markdown）
+#[derive(ValueEnum, Debug, Clone, PartialEq, Eq)]
+pub enum ContextOutputFormat {
+    /// JSON 格式（结构化，适合程序解析）
+    Json,
+    /// Markdown 格式（紧凑，适合 AI 直接读取）
+    Markdown,
+}
+
 /// Radar —— 项目依赖关系分析工具
 #[derive(Parser, Debug)]
 #[command(
@@ -41,6 +50,9 @@ pub enum Commands {
 
     /// 查找两个文件之间的最短依赖路径
     Path(PathArgs),
+
+    /// 生成目标文件/函数的完整上下文（影响范围 + 调用者 + 循环检测），一次调用供 AI 决策
+    Context(ContextArgs),
 }
 
 /// `analyze` 子命令参数
@@ -253,6 +265,33 @@ pub struct PathArgs {
     /// 输出格式
     #[arg(long, short = 'o', value_enum, default_value = "tree")]
     pub output: OutputFormat,
+}
+
+/// `context` 子命令参数
+#[derive(Parser, Debug)]
+pub struct ContextArgs {
+    /// 目标文件的绝对路径
+    pub target: PathBuf,
+
+    /// 项目根目录（用于构建依赖图，默认当前目录）
+    #[arg(long, short = 'r')]
+    pub root: Option<PathBuf>,
+
+    /// 同时分析指定函数的调用者（需语言支持 tree-sitter）
+    #[arg(long, short = 'n')]
+    pub function: Option<String>,
+
+    /// 影响范围最大深度（0 = 不限）
+    #[arg(long, short = 'd', default_value = "5")]
+    pub depth: usize,
+
+    /// 指定语言（不指定则自动检测）
+    #[arg(long, short = 'l', value_enum, default_value = "auto")]
+    pub lang: Lang,
+
+    /// 输出格式（默认 markdown，token 更紧凑）
+    #[arg(long, short = 'o', value_enum, default_value = "markdown")]
+    pub output: ContextOutputFormat,
 }
 
 /// 输出格式
