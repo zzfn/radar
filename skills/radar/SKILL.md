@@ -12,7 +12,7 @@ description: >
   需要可视化依赖图时。
 license: MIT
 metadata:
-  author: nio-wad
+  author: c.chen
   version: "0.6.0"
 ---
 
