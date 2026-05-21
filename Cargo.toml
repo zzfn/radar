@@ -1,6 +1,6 @@
 [package]
 name = "radar"
-version = "0.1.0"
+version = "0.6.0"
 edition = "2021"
 description = "项目依赖关系分析工具，支持多语言和多种输出格式"
 authors = []
