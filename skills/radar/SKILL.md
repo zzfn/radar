@@ -30,8 +30,9 @@ metadata:
   改为分析 `src/` 子目录，或加 `--exclude "node_modules/**"`。
 - **NEVER 把 unused 函数结果当作可以安全删除的确定依据**：JS 回调、Python 装饰器、
   Go 接口实现、Rust trait impl 均无法被静态调用图覆盖，结果是"候选"而非"确定"。
-- **NEVER 跳过 functions 验证直接运行 impact --function**：函数名拼错或语言不支持
-  tree-sitter 时，impact 静默返回 `total_callers=0`，被误判为安全。
+- **NEVER 跳过 functions 验证直接运行 `impact --function`**：函数名拼错或语言不支持
+  tree-sitter 时，`impact --function` 静默返回 `total_callers=0`，被误判为安全。
+  （`context --function` 已内置 stderr 警告，不受此限制。）
 - **NEVER 把 total_affected > 30 的结果直接展示给用户**：是底层公共模块，先用
   `--depth 2` 聚焦直接依赖层，否则信息过载反而无用。
 - **NEVER 把 radar 输出重定向到 /tmp 文件**：直接从 stdout 读取即可，禁止使用
@@ -115,7 +116,8 @@ none
 
 | 情况 | 原因 | 处理 |
 |------|------|------|
-| 结果为空（0 节点） | 语言检测失败 | 显式传 `--lang <lang>` |
+| stderr 警告"未找到语言源文件" | 语言检测失败或目录无对应文件 | 显式传 `--lang <lang>` |
+| stderr 警告"目标文件未出现在图中" | 路径错误或语言不匹配 | 检查路径是否为绝对路径，或用 `--lang` 指定 |
 | 分析耗时极长 | 目录含 vendor/生成文件 | 改为分析 `src/` 子目录 |
 | binary 找不到 | skill 未编译 | `cargo build --release && cp target/release/radar skills/radar/scripts/` |
 
@@ -127,28 +129,23 @@ none
 ./scripts/radar impact <文件绝对路径> --root <项目根目录>
 ```
 
-### 场景二：修改函数前（降级方案）
+### 场景二：确认函数名唯一性（降级方案）
 
-仅在需要确认函数名唯一性时才单独用 `functions` + `impact`：
+`context --function` 已内置警告，但无法判断同名函数是否存在于多个文件。
+若要核实唯一性再决定是否信任结果，才需要单独跑 `functions`：
 
 ```bash
-# 步骤一：确认函数名存在 + 检查唯一性
 ./scripts/radar functions <目录> --lang <语言>
-
-# 步骤二（已被 context --function 覆盖，通常不需要单独跑）
-./scripts/radar impact <文件绝对路径> --function <函数名> --root <项目根目录>
 ```
 
-决策：
-- `total_callers == 0` → 无静态调用者（注意精度边界）
-- `total_callers > 0`  → 列出所有调用者，提示可能需同步修改
+- 函数名唯一 → `context --function` 结果可信
+- 函数名重复 → 保守降级为文件级 `context`，实际影响可能更大
+- 返回空（语言不支持） → 降级为文件级 `context`
 
 精度边界（必须告知用户）：
 - 同文件调用、跨文件唯一名 → **准确**
 - 同名函数多个 → 保守跳过，实际影响**可能更大**
 - 动态派发/回调/接口实现 → **无法覆盖**
-
-步骤一返回空（语言不支持）→ 降级为文件级 `impact`。
 
 ### 场景三：修改完成后检查循环
 
