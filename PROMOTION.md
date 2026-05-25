@@ -99,30 +99,47 @@ Rust · TypeScript · JavaScript · Vue · Python · Go · Java
 
 ## 使用方式
 
-### 集成到 AI coding agent（推荐）
+### Skill 调用（推荐）
 
-将 radar 作为工具注册给 AI agent 后，AI 会**自动判断时机**——当你提到要修改某个文件或函数时，它主动跑 radar、读结果、再动手，整个过程你不需要输入任何命令。
+将 Radar 作为 skill 注册给 AI coding agent 后，AI 会自动判断时机——无需任何额外指令，说要改代码它就先跑 radar。
 
 ```
 你：把 validate_token 的超时从 30s 改成 60s
 
-AI：[自动运行 radar context，发现 3 个调用者]
+AI：[自动调用 radar context --function validate_token]
     validate_token 有 3 个调用者，修改前确认一下影响范围……
 ```
 
-触发时机由工具描述定义，包括：修改文件/函数前、询问依赖关系时、开始重构前、需要可视化依赖图时。
+触发时机由 skill 描述定义，包括：修改文件/函数前、询问依赖关系时、开始重构前、需要可视化依赖图时。
 
-### 直接调用
+### CLI 直接调用
 
-Radar 是标准 CLI，也可以手动跑：
+Radar 是标准 CLI，所有分析能力均可手动调用：
 
 ```bash
-# 修改文件前
+# 修改前全量上下文（首选）
 radar context $(realpath <目标文件>) --root $(pwd)
-
-# 修改函数前
 radar context $(realpath <目标文件>) --root $(pwd) --function <函数名>
+
+# 影响范围分析
+radar impact $(realpath <目标文件>) --root $(pwd)
+
+# 循环依赖检测
+radar cycles $(pwd)
+
+# 死代码扫描
+radar unused $(pwd) --functions
+
+# 高风险节点排行
+radar hotspot $(pwd) --top 10
+
+# 依赖路径追踪
+radar path $(pwd) --from $(realpath <文件A>) --to $(realpath <文件B>)
 ```
+
+### 基于 CLI 封装自己的 Skill
+
+Radar CLI 输出标准 Markdown / JSON，可以直接作为任何 AI agent 的工具底座。欢迎基于 CLI 封装适合自己工作流的 skill，或集成进 CI/CD 流程。
 
 ---
 
