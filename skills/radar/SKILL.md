@@ -1,14 +1,16 @@
 ---
 name: radar
 description: >
-  代码依赖分析工具。修改文件/函数前评估影响范围（blast radius），检测循环依赖，
+  函数调用者查询 & 代码依赖分析工具。
+  【直接触发】询问"哪些地方调用了 X"、"X 被谁调用"、"X 调用了谁"、"who calls X"、"callers of X" → 立即用 context --function。
+  修改文件/函数前评估影响范围（blast radius），检测循环依赖，
   定位死代码（unused files/functions），识别高风险核心节点（hotspot），
   查找两文件间依赖路径（why does A depend on B）。
-  Use when: modifying files/functions, refactoring, reviewing PRs for dependency changes,
-  finding dead code / unused code, understanding why two modules are coupled,
-  assessing change risk before editing shared utilities.
-  主动触发：用户准备修改文件或函数时、询问依赖关系或改动风险时、开始大范围重构前、
-  询问某个函数被谁调用或调用了谁时、需要了解项目整体结构或模块关系时、
+  Use when: querying function callers/callees, modifying files/functions, refactoring,
+  reviewing PRs for dependency changes, finding dead code / unused code,
+  understanding why two modules are coupled, assessing change risk before editing shared utilities.
+  主动触发：询问某个函数被谁调用或调用了谁时、用户准备修改文件或函数时、
+  询问依赖关系或改动风险时、开始大范围重构前、需要了解项目整体结构或模块关系时、
   需要可视化依赖图时。
 license: MIT
 metadata:
@@ -37,13 +39,15 @@ metadata:
   `--depth 2` 聚焦直接依赖层，否则信息过载反而无用。
 - **NEVER 把 radar 输出重定向到 /tmp 文件**：直接从 stdout 读取即可，禁止使用
   `> /tmp/xxx.json` 或 `--out-file /tmp/...`。输出过大时改用 `--depth 2` 裁剪。
-- **Java Maven/Gradle 项目**：radar 会自动从传入目录向上找 `pom.xml` / `build.gradle`
-  定位项目根，再扫描其下所有 `src/main/java` 作为解析候选，跨模块 import 自动覆盖。
-  传任意目录（模块子目录或项目根）均可，无需手动指定每个模块的 source root。
 
 ---
 
 ## 修改前的决策框架
+
+**修改前，先问三个问题：**
+1. 这是叶子模块还是核心节点？→ 入度 > 5 的文件要格外谨慎，先跑 `hotspot` 确认
+2. 函数名在项目内唯一吗？→ 决定 `--function` 结果是否可信（重名则降级为文件级）
+3. 改的是什么类型？→ 查下表选命令
 
 **优先使用 `context`**：绝大多数修改前评估，一条命令即可完成（影响范围 + 可选函数调用者 + 循环检测）。只在需要特殊分析时才降级到单一子命令。
 
@@ -176,6 +180,8 @@ none
 
 有路径 → 按路径逐跳解释耦合原因；无路径 → 两模块独立，可分别修改。
 
+> **Java Maven/Gradle 项目**：radar 自动从传入目录向上找 `pom.xml` / `build.gradle` 定位项目根，跨模块 import 自动覆盖。传任意目录均可，无需手动指定每个模块的 source root。
+
 ### 场景六：生成依赖图并在浏览器打开
 
 将依赖图编码进 mermaid.live URL，直接在浏览器渲染，无需安装任何工具。
@@ -227,31 +233,3 @@ open "$URL"
 - 开始大范围重构前建立全局视图
 - 回答"这个模块负责什么"、"哪些模块相互依赖"等架构问题
 
----
-
-## 子命令速查
-
-| 子命令 | 典型用法 | 输出 |
-|--------|---------|------|
-| `context` | **修改前全量上下文（首选）** | markdown / json |
-| `impact` | 修改前评估影响（降级方案） | JSON / `--text` |
-| `functions` | 探查函数定义 | JSON / `dot` / `mermaid` / `tree` |
-| `cycles` | 检测循环依赖 | 文本 / `--json` |
-| `unused` | 死代码检测 | tree / `--output json` |
-| `hotspot` | 高风险节点 | tree / `--output json` |
-| `path` | 依赖路径查找 | tree / `json` / `mermaid` |
-| `analyze` | 全量依赖图 | tree / json / dot / mermaid |
-
-## 常用参数
-
-| 参数 | 适用 | 说明 |
-|------|------|------|
-| `--root <dir>` | `context` `impact` | 项目根目录（默认当前目录） |
-| `--function <name>` | `context` `impact` | 函数级分析 |
-| `--depth <n>` | `context` `impact` `analyze` | 最大追踪跳数，默认 context=5，其余 0=不限 |
-| `--lang <lang>` | 所有 | `rust` `ts` `js` `go` `python` `java` `vue` |
-| `--output <fmt>` | `context` | `markdown`（默认）/ `json` |
-| `--text` | `impact` | 人类可读输出 |
-| `--functions` | `unused` | 同时检测未调用函数 |
-| `--top <n>` | `hotspot` | 前 N 个节点（默认 10） |
-| `--from / --to` | `path` | 起止文件（绝对路径） |
