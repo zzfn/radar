@@ -141,6 +141,8 @@ radar path $(pwd) --from $(realpath <文件A>) --to $(realpath <文件B>)
 
 Radar CLI 输出标准 Markdown / JSON，可以直接作为任何 AI agent 的工具底座。欢迎基于 CLI 封装适合自己工作流的 skill，或集成进 CI/CD 流程。
 
+> 仓库：https://git.nevint.com/wad/pdd/radar
+
 ---
 
 ## 一个比喻
