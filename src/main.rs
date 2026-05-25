@@ -239,7 +239,12 @@ fn cmd_impact(args: ImpactArgs) -> Result<()> {
     }
 
     // 构建依赖图（原有文件级分析）
-    let lang = resolve_lang(&args.lang, &root);
+    // 优先从目标文件扩展名推断语言，避免混合子项目干扰整个 root 的统计
+    let lang = if args.lang == Lang::Auto {
+        lang_from_path(&target).unwrap_or_else(|| detect_language(&root))
+    } else {
+        resolve_lang(&args.lang, &root)
+    };
     let mut graph = DependencyGraph::new();
     let analyzer = create_analyzer(&lang);
     analyzer.analyze_dir(&root, &mut graph, &crate::analyzer::FilterOpts::default())?;
@@ -556,7 +561,12 @@ fn cmd_context(args: ContextArgs) -> Result<()> {
     };
 
     // 构建文件级依赖图
-    let lang = resolve_lang(&args.lang, &root);
+    // 优先从目标文件扩展名推断语言，避免混合子项目干扰整个 root 的统计
+    let lang = if args.lang == Lang::Auto {
+        lang_from_path(&target).unwrap_or_else(|| detect_language(&root))
+    } else {
+        resolve_lang(&args.lang, &root)
+    };
     let mut graph = DependencyGraph::new();
     let analyzer = create_analyzer(&lang);
     analyzer.analyze_dir(&root, &mut graph, &crate::analyzer::FilterOpts::default())?;
@@ -695,6 +705,21 @@ fn cmd_context(args: ContextArgs) -> Result<()> {
 }
 
 // ─────────────────────────── 工具函数 ───────────────────────────
+
+/// 从文件扩展名直接推断语言，避免 detect_language 扫描整个目录被无关子项目干扰
+fn lang_from_path(path: &Path) -> Option<crate::graph::Language> {
+    use crate::graph::Language;
+    match path.extension()?.to_str()? {
+        "rs" => Some(Language::Rust),
+        "ts" | "tsx" => Some(Language::TypeScript),
+        "js" | "jsx" => Some(Language::JavaScript),
+        "py" => Some(Language::Python),
+        "go" => Some(Language::Go),
+        "java" => Some(Language::Java),
+        "vue" => Some(Language::Vue),
+        _ => None,
+    }
+}
 
 /// 将 CLI lang 参数转换为内部 Language 枚举
 fn resolve_lang(cli_lang: &Lang, path: &Path) -> crate::graph::Language {
