@@ -1,17 +1,13 @@
 ---
 name: radar
 description: >
-  函数调用者查询 & 代码依赖分析工具。
+  代码依赖分析 & 函数调用关系查询工具，支持 JS/TS/Rust/Python/Go/Java/Vue。
   【直接触发】询问"哪些地方调用了 X"、"X 被谁调用"、"X 调用了谁"、"who calls X"、"callers of X" → 立即用 context --function。
-  修改文件/函数前评估影响范围（blast radius），检测循环依赖，
-  定位死代码（unused files/functions），识别高风险核心节点（hotspot），
-  查找两文件间依赖路径（why does A depend on B）。
-  Use when: querying function callers/callees, modifying files/functions, refactoring,
-  reviewing PRs for dependency changes, finding dead code / unused code,
-  understanding why two modules are coupled, assessing change risk before editing shared utilities.
-  主动触发：询问某个函数被谁调用或调用了谁时、用户准备修改文件或函数时、
-  询问依赖关系或改动风险时、开始大范围重构前、需要了解项目整体结构或模块关系时、
-  需要可视化依赖图时。
+  Use when: querying function callers or callees, assessing blast radius / change risk before modifying a file or function,
+  refactoring, reviewing PRs for dependency impact, finding dead code / unused files / unused functions,
+  detecting circular dependencies, identifying high-risk hotspot nodes,
+  tracing why two modules are coupled (path analysis),
+  visualizing / analyzing the dependency graph as Mermaid / DOT / JSON.
 license: MIT
 metadata:
   author: c.chen
@@ -77,6 +73,11 @@ metadata:
 ---
 
 ## 执行流程
+
+**开始前，先问自己：**
+- 改的是文件还是函数？→ 函数用 `--function`，文件直接 `context`
+- 函数名在项目里唯一吗？→ 不确定先跑 `functions` 验证，再信任结果
+- 影响范围可能超 30 个文件吗？→ 先用 `--depth 2` 看直接层，再决定是否展开
 
 > **Java Maven/Gradle 项目**：radar 自动从传入目录向上找 `pom.xml` / `build.gradle` 定位项目根，跨模块 import 自动覆盖。传任意目录均可，无需手动指定每个模块的 source root。
 
@@ -153,6 +154,9 @@ none
 - 同名函数多个 → 保守跳过，实际影响**可能更大**
 - 动态派发/回调/接口实现 → **无法覆盖**
 
+遇到后两种情况时，在输出中附上：
+> "以上为静态调用图结果，动态派发（回调/接口实现/装饰器）不在覆盖范围内，实际影响可能更大。"
+
 ### 场景三：修改完成后检查循环
 
 ```bash
@@ -173,6 +177,15 @@ none
 - hotspot 入度 1-3  → 普通模块，正常修改
 - unused 文件 out_degree > 0 → 孤立模块（依赖别人但无人依赖），候选清理
 - unused 文件 out_degree == 0 → 完全孤立，可安全删除
+
+**读完 hotspot 结果后的决策：**
+
+| 入度 | 引用来源 | 风险 | 处置 |
+|------|---------|------|------|
+| > 10 | 业务代码 | 极高 | 必须跑完整 `context`，逐一确认影响链 |
+| > 10 | 仅 test/ | 中 | 实际风险低，可直接修改 |
+| 1–3 | 任意 | 低 | 正常修改 |
+| 0 | — | 无 | 孤立节点，可安全删除 |
 
 ### 场景五：追踪依赖来源
 
